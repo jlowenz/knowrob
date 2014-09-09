@@ -45,7 +45,8 @@
 
 
 :-  rdf_meta
-    create_object_perception(r,+,+,+,-).
+    create_object_perception(r,+,t,-),
+    create_perception_instance(t,-).
 
 %% create_object_perception(+ObjClass, +ObjPose, +PerceptionTypes, -ObjInst)
 %
@@ -71,13 +72,13 @@ create_perception_instance(PerceptionTypes, Perception) :-
 
   % create individual from first type in the list
   nth0(0, PerceptionTypes, PType),
-  atom_concat('http://knowrob.org/kb/knowrob.owl#', PType, PClass),
-  rdf_instance_from_class(PClass, Perception),
+  %atom_concat('http://knowrob.org/kb/knowrob.owl#', PType, PClass),
+  rdf_instance_from_class(PType, Perception),
 
   % set all other types
   findall(PC, (member(PT, PerceptionTypes),
-               atom_concat('http://knowrob.org/kb/knowrob.owl#', PT, PC),
-               rdf_assert(Perception, rdf:type, PC)), _),
+               %atom_concat('http://knowrob.org/kb/knowrob.owl#', PT, PC),
+               rdf_assert(Perception, rdf:type, PT)), _),
 
   % create detection time point
   get_timepoint(TimePoint),
