@@ -29,7 +29,8 @@
       set_object_perception/2,
       set_perception_pose/2,
       create_pose/2,
-      set_perception_cov/2
+      set_perception_cov/2,
+      check_ns/2
     ]).
 
 :- use_module(library('semweb/rdf_db')).
@@ -45,7 +46,20 @@
 
 
 :-  rdf_meta
-    create_object_perception(r,+,+,+,-).
+    create_object_perception(r,+,t,-),
+    check_ns(r,-).
+
+:- print("Hello there...").
+
+%% check_ns(+Entity, -NSEntity)
+%
+% Utility predicate for verifying the KnowRob OWL namespace. If the
+% Entity already includes a namespace prefix, then pass through
+% without modification (for use with DIFFERENT namespaces) otherwise
+% prefix with the standard NS.
+check_ns(Entity, NSEntity) :-    
+    sub_atom_icasechk(Entity, _, '#') -> NSEntity = Entity; 
+    atom_concat('http://knowrob.org/kb/knowrob.owl#', Entity, NSEntity).
 
 %% create_object_perception(+ObjClass, +ObjPose, +PerceptionTypes, -ObjInst)
 %
@@ -58,8 +72,6 @@ create_object_perception(ObjClass, ObjPose, PerceptionTypes, ObjInst) :-
     set_object_perception(ObjInst, Perception),
     set_perception_pose(Perception, ObjPose).
 
-
-
 %% create_perception_instance(-Perception) is det.
 %% create_perception_instance(+ModelTypes, -Perception) is det.
 %
@@ -71,12 +83,14 @@ create_perception_instance(PerceptionTypes, Perception) :-
 
   % create individual from first type in the list
   nth0(0, PerceptionTypes, PType),
-  atom_concat('http://knowrob.org/kb/knowrob.owl#', PType, PClass),
+  %atom_concat('http://knowrob.org/kb/knowrob.owl#', PType, PClass),
+  check_ns(PType, PClass),
   rdf_instance_from_class(PClass, Perception),
 
   % set all other types
   findall(PC, (member(PT, PerceptionTypes),
-               atom_concat('http://knowrob.org/kb/knowrob.owl#', PT, PC),
+               %atom_concat('http://knowrob.org/kb/knowrob.owl#', PT, PC),
+	       check_ns(PT, PC),
                rdf_assert(Perception, rdf:type, PC)), _),
 
   % create detection time point
@@ -88,27 +102,25 @@ create_perception_instance(PerceptionTypes, ModelTypes, Perception) :-
 
   % create individual from first type in the list
   nth0(0, PerceptionTypes, PType),
-  atom_concat('http://knowrob.org/kb/knowrob.owl#', PType, PClass),
+  %atom_concat('http://knowrob.org/kb/knowrob.owl#', PType, PClass),
+  check_ns(PType, PClass),
   rdf_instance_from_class(PClass, Perception),
 
   % set all other types
   findall(PC, (member(PT, PerceptionTypes),
-               atom_concat('http://knowrob.org/kb/knowrob.owl#', PT, PC),
+               %atom_concat('http://knowrob.org/kb/knowrob.owl#', PT, PC),
+	       check_ns(PT, PC),
                rdf_assert(Perception, rdf:type, PC)), _),
 
   % set the perceivedUsingModel relation
   findall(MC, (member(MT, ModelTypes),
-               atom_concat('http://knowrob.org/kb/knowrob.owl#', MT, MC),
+               %atom_concat('http://knowrob.org/kb/knowrob.owl#', MT, MC),
+	       check_ns(MT, MC),
                rdf_assert(Perception, knowrob:perceivedUsingModel, MC)), _),
 
   % create detection time point
   get_timepoint(TimePoint),
   rdf_assert(Perception, knowrob:startTime, TimePoint).
-
-
-
-
-
 
 %% create_object_instance(+ObjTypes, +ObjID, -Obj) is det.
 %
@@ -119,7 +131,7 @@ create_object_instance(ObjTypes, ObjID, Obj) :-
   % map types to object classes
   member(ObjType, ObjTypes),
   string_to_atom(ObjType, TypeAtom),
-%   to_knowrob(TypeAtom, TypeAtomKnowrob),
+  %   to_knowrob(TypeAtom, TypeAtomKnowrob),
   TypeAtomKnowrob = TypeAtom,
 
   %TODO: replace this with real entity resolution
