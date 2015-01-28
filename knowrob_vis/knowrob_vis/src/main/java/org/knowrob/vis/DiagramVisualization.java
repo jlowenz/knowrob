@@ -73,6 +73,8 @@ public class DiagramVisualization extends AbstractNodeMain {
 			data.setType(DataVis.TYPE_BARCHART);
 		} else if(type.equals("treechart")) {
 			data.setType(DataVis.TYPE_TREECHART);
+		} else if(type.equals("timeline")) {
+			data.setType(DataVis.TYPE_TIMELINE);
 		}
 
 		for(String[][] val_list : values) {
@@ -88,7 +90,6 @@ public class DiagramVisualization extends AbstractNodeMain {
 				diagrams.put(id, data);
 			}
 		}
-		publishDiagrams();
 		publishDiagrams();
 	}
 
@@ -126,6 +127,15 @@ public class DiagramVisualization extends AbstractNodeMain {
 		}*/
 		for(String mrk : diagrams.keySet()) {
 			removeDiagram(mrk);
+			
+			// Workaround: send messages more slowly to avoid race conditions 
+			// of the asynchronous message handles. Should be fixed in the JS 
+			// client to properly update the diagrams buffer.
+			try {
+				Thread.sleep(80);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 		}
 	}
 

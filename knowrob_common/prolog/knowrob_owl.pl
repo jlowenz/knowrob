@@ -32,7 +32,8 @@
       rdf_instance_from_class/3,
       get_timepoint/1,
       get_timepoint/2,
-      create_timepoint/2
+      create_timepoint/2,
+      inspect/3
     ]).
 
 :- use_module(library('crypt')).
@@ -53,14 +54,43 @@
             create_timepoint(+,r),
             get_timepoint(r),
             get_timepoint(+,r),
-            create_restr(r, r, r, r, +, r).
+            create_restr(r, r, r, r, +, r),
+            inspect(r,r,r).
 
 :- rdf_db:rdf_register_ns(owl,    'http://www.w3.org/2002/07/owl#', [keep(true)]).
 :- rdf_db:rdf_register_ns(rdfs,   'http://www.w3.org/2000/01/rdf-schema#', [keep(true)]).
 :- rdf_db:rdf_register_ns(knowrob,'http://knowrob.org/kb/knowrob.owl#', [keep(true)]).
 
 
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % 
+% experimental: inspect() predicate for reading information about things
 
+
+%% inspect(?Thing, ?P, ?O).
+%
+% Read information stored for Thing. Basically a wrapper around owl_has and
+% class_properties that aggregates their results. The normal use case is to
+% have Thing bound and ask for all property/object pairs for this class or
+% individual.
+%
+% @param Thing  RDF identifier, either an OWL class or an individual
+% @param P      OWL property identifier 
+% @param O      OWL class, individual or literal value specified as property P of Thing
+% 
+inspect(Thing, P, O) :-
+  (rdf_has(Thing, rdf:type, owl:'namedIndividual');
+   rdf_has(Thing, rdf:type, owl:'NamedIndividual')),
+  owl_has(Thing, P, Olit),
+  strip_literal_type(Olit, O).
+  
+inspect(Thing, P, O) :-
+  rdf_has(Thing, rdf:type, owl:'Class'),
+  class_properties(Thing, P, Olit),
+  strip_literal_type(Olit, O).
+  
+
+
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % 
 
 %% rdf_instance_from_class(+Class, -Inst) is nondet.
 %
@@ -73,7 +103,7 @@ rdf_instance_from_class(Class, Instance) :-
 
 
 
-%% rdf_instance_from_class(+Class, +SourceRef -Inst) is nondet.
+%% rdf_instance_from_class(+Class, +SourceRef, -Inst) is nondet.
 %
 % Utility predicate to generate unique instance identifiers using
 % the source reference SourceRef for rdf_assert
@@ -234,7 +264,7 @@ class_properties_1_some(Class, Prop, Val) :-       % read all values for some_va
 
 
 
-%% class_properties_some(?Class, ?Prop, ?Val) is nondet.
+%% class_properties_all(?Class, ?Prop, ?Val) is nondet.
 %
 % Collect all property values of someValuesFrom-restrictions of a class
 %
@@ -260,7 +290,7 @@ class_properties_1_all(Class, Prop, Val) :-       % read all values for all_valu
 
 
 
-%% class_properties_some(?Class, ?Prop, ?Val) is nondet.
+%% class_properties_value(?Class, ?Prop, ?Val) is nondet.
 %
 % Collect all property values of someValuesFrom-restrictions of a class
 %
@@ -284,9 +314,14 @@ class_properties_1_value(Class, Prop, Val) :-       % read all values for has_va
   owl_restriction(Sup,restriction(SubProp, has_value(Val))) .
 
 
-
-% forked class_properties to get rid of export of super-classes
-
+%% class_properties_nosup(?Class, ?Prop, ?Val) is nondet.
+%
+% Version of class_properties without considering super classes
+%
+% @param Class Class whose restrictions are being considered
+% @param Prop  Property whose restrictions in Class are being considered
+% @param Val   Values that appear in a restriction of a superclass of Class on Property
+%
 class_properties_nosup(Class, Prop, Val) :-         % read directly asserted properties
   class_properties_nosup_1(Class, Prop, Val).
 
@@ -301,7 +336,14 @@ class_properties_nosup_1(Class, Prop, Val) :-
   ( owl_restriction(Sup,restriction(SubProp, some_values_from(Val))) ;
     owl_restriction(Sup,restriction(SubProp, has_value(Val))) ).
 
-
+%% class_properties_transitive_nosup(?Class, ?Prop, ?Val) is nondet.
+%
+% Transitive cersion of class_properties without considering super classes
+%
+% @param Class Class whose restrictions are being considered
+% @param Prop  Property whose restrictions in Class are being considered
+% @param Val   Values that appear in a restriction of a superclass of Class on Property
+%
 class_properties_transitive_nosup(Class, Prop, SubComp) :-
     class_properties_nosup(Class, Prop, SubComp).
 class_properties_transitive_nosup(Class, Prop, SubComp) :-

@@ -17,13 +17,17 @@
 
 :- module(knowrob_mongo,
     [
+      mng_db/1,
       mng_latest_designator_before_time/3,
       mng_designator_type/2,
       mng_designator_props/3,
+      mng_desig_matches/2,
       mng_obj_pose_by_desig/2,
 
       mng_lookup_transform/4,
       mng_transform_pose/5,
+
+      mng_timestamp/2,
 
       mng_robot_pose/2,
       mng_robot_pose_at_time/4,
@@ -46,6 +50,7 @@
 
 
 :-  rdf_meta
+    mng_db(+),
     mng_lookup_transform(+,+,r,-),
     mng_latest_designator_before_time(r,-,-),
 
@@ -53,6 +58,13 @@
     mng_robot_pose_at_time(r, +, r, r),
     mng_comp_pose(r, r),
     mng_comp_pose_at_time(r, +, r, r),
+
+    mng_timestamp(r, r),
+
+    mng_desig_matches(r, +),
+    mng_obj_pose_by_desig(r,r),
+    mng_designator_props(r,?),
+    mng_designator_type(r,?),
 
     obj_blocked_by_in_camera(r, r, r, r),
     obj_visible_in_camera(r, r, r).
@@ -65,23 +77,45 @@
 :- rdf_db:rdf_register_ns(srdl2comp, 'http://knowrob.org/kb/srdl2-comp.owl#', [keep(true)]).
 
 
+
+mongo_interface :-
+    mongo_interface(_).
+
+:- assert(mng_interface(fail)).
+mongo_interface(DB) :-
+    mng_interface(fail),
+    jpl_new('org.knowrob.interfaces.mongo.MongoDBInterface', [], DB),
+    retract(mng_interface(fail)),
+    assert(mng_interface(DB)),!.
+mongo_interface(DB) :-
+    mng_interface(DB).
+
+%% mng_db(+DBName) is nondet.
+%
+% Change mongo database used for future queries
+%
+% @param DBName  The name of the db (e.g., 'roslog')
+%
+mng_db(DBName) :-
+    mongo_interface(Mongo),
+    jpl_call(Mongo, setDatabase, [DBName], _).
+
+
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 % Designator integration
 %
 
 %% mng_latest_designator_before_time(+TimePoint, -Type, -Pose) is nondet.
 %
+% Read the pose of the latest designator of type 'Type' before 'TimePoint'
+%
 % @param TimePoint  Instance of knowrob:TimePoint
 % @param Type       'Type' property of the designator
 % @param PoseList   Object pose from designator as list[16]
 %
 mng_latest_designator_before_time(TimePoint, Type, PoseList) :-
-
-  rdf_split_url(_, TimePointLocal, TimePoint),
-  atom_concat('timepoint_', TimeAtom, TimePointLocal),
-  term_to_atom(Time, TimeAtom),
-
-  jpl_new('org.knowrob.interfaces.mongo.MongoDBInterface', [], DB),
+  time_term(TimePoint, Time),
+  mongo_interface(DB),
   jpl_call(DB, 'latestUIMAPerceptionBefore', [Time], Designator),
   jpl_call(Designator, 'get', ['_designator_type'], Type),
   jpl_call(Designator, 'get', ['POSE-ON-PLANE'], StampedPoseString),
@@ -92,7 +126,13 @@ mng_latest_designator_before_time(TimePoint, Type, PoseList) :-
   knowrob_coordinates:matrix4d_to_list(PoseMatrix4d, PoseList).
 
 
-% Computable: determine object pose based on designator
+%% mng_obj_pose_by_desig(+Obj, -Pose) is nondet.
+% 
+% Determine object pose based on the POSE property of a linked designator
+%
+% @param Obj   Object instance
+% @param Pose  Instance of a Perception
+% 
 mng_obj_pose_by_desig(Obj, Pose) :-
 
   % TODO: avoid multiple creation of pose instances
@@ -100,21 +140,37 @@ mng_obj_pose_by_desig(Obj, Pose) :-
   mng_designator_props(Designator, 'POSE', Pose).
 
 
+
+%% mng_designator_type(+Designator, ?Type) is nondet.
+%
+% Read the type of a logged designator by its ID
+% 
+% @param Designator  Instance of a designator, having its ID as local part of the IRI
+% @param Type        Type of the designator
+% 
 mng_designator_type(Designator, Type) :-
 
   rdf_split_url(_, DesigID, Designator),
 
-  jpl_new('org.knowrob.interfaces.mongo.MongoDBInterface', [], DB),
+  mongo_interface(DB),
   jpl_call(DB, 'getDesignatorByID', [DesigID], DesigJava),
 
   jpl_call(DesigJava, 'getType', [], Type).
 
 
+%% mng_designator_props(+Designator, ?Prop, ?Value) is nondet.
+%
+% Read the properties of a logged designator by its ID
+%
+% @param Designator  Instance of a designator, having its ID as local part of the IRI
+% @param Prop        Property slot of the designator
+% @param Value       Value slot of the designator
+% 
 mng_designator_props(Designator, Prop, Value) :-
 
   rdf_split_url(_, DesigID, Designator),
 
-  jpl_new('org.knowrob.interfaces.mongo.MongoDBInterface', [], DB),
+  mongo_interface(DB),
   jpl_call(DB, 'getDesignatorByID', [DesigID], DesigJava),
 
   jpl_call(DesigJava, 'keySet', [], PropsSet),
@@ -123,14 +179,24 @@ mng_designator_props(Designator, Prop, Value) :-
   once(mng_desig_get_value(Designator, DesigJava, Prop, Value)).
 
 
+
+%% mng_desig_get_value(?Designator, +DesigJava, +Prop, -Value).
+% 
 % Internal helper method: handle the different kinds of designator values
+%
+% @param Designator  Designator instance
+% @param DesigJava   Java handle of a org.knowrob.mongo.types.Designator object
+% @param Prop        Designator property
+% @param Value       Value extracted from the designator, e.g. a primitive value
+%                    (string, float etc), the handle of a nested designator object,
+%                    or an instance of a RotationMatrix3D of an object pose
+%
 
 % create designator instance for child-designators
 mng_desig_get_value(_Designator, DesigJava, Prop, Value) :-
   jpl_call(DesigJava, 'get', [Prop], ValIn),
   jpl_ref_to_type(ValIn,  class([org,knowrob,interfaces,mongo,types],['Designator'])),
   Value=ValIn. % TODO
-
 
 % create observation of the object to which the designator is attached
 mng_desig_get_value(Designator, DesigJava, Prop, Pose) :-
@@ -181,6 +247,9 @@ mng_desig_get_value(_Designator, DesigJava, Prop, Value) :-
 
 %% mng_lookup_transform(+Target, +Source, +TimePoint, -Transform) is nondet.
 %
+% Determine the transform from Source to Target at TimePoint based on the logged
+% tf data.
+% 
 % @param Target     Target frame ID
 % @param Source     Source frame ID
 % @param TimePoint  Instance of knowrob:TimePoint
@@ -192,13 +261,23 @@ mng_lookup_transform(Target, Source, TimePoint, Transform) :-
   atom_concat('timepoint_', TimeAtom, TimePointLocal),
   term_to_atom(Time, TimeAtom),
 
-  jpl_new('org.knowrob.interfaces.mongo.MongoDBInterface', [], DB),
+  mongo_interface(DB),
   jpl_call(DB, 'lookupTransform', [Target, Source, Time], StampedTransform),
 
   jpl_call(StampedTransform, 'getMatrix4', [], TransformMatrix4d),
   knowrob_coordinates:matrix4d_to_list(TransformMatrix4d, Transform).
 
 
+%% mng_transform_pose(+PoseListIn, +SourceFrame, +TargetFrame, +TimePoint, -PoseListOut) is nondet.
+% 
+% Transform PoseListIn from SourceFrame into TargetFrame based on the logged tf data.
+% 
+% @param PoseListIn    Pose matrix in SourceFrame to be transformed into TargetFrame, as row-based list[16]
+% @param SourceFrame   Source frame ID
+% @param TargetFrame   Target frame ID
+% @param TimePoint     Instance of knowrob:TimePoint
+% @param PoseListOut   Pose matrix as row-based list[16]
+%
 mng_transform_pose(PoseListIn, SourceFrame, TargetFrame, TimePoint, PoseListOut) :-
 
   rdf_split_url(_, TimePointLocal, TimePoint),
@@ -212,11 +291,24 @@ mng_transform_pose(PoseListIn, SourceFrame, TargetFrame, TimePoint, PoseListOut)
   knowrob_coordinates:list_to_matrix4d([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1], MatrixOut),
   jpl_new('tfjava.Stamped', [MatrixOut, '/base_link', TimeInt], StampedOut),
 
-  jpl_new('org.knowrob.interfaces.mongo.MongoDBInterface', [], DB),
+  mongo_interface(DB),
   jpl_call(DB, 'transformPose', [TargetFrame, StampedIn, StampedOut], @(true)),
   
   jpl_call(StampedOut, 'getData', [], MatrixOut2),
   knowrob_coordinates:matrix4d_to_list(MatrixOut2, PoseListOut).
+
+%% mng_timestamp(+Date, -Stamp) is nondet.
+%
+% Computes a timestamp that corresponds to the specified date.
+% date format must be as follows: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+%
+% @param Date        String representation of a date
+% @param Stamp       Floating point timestamp that represents the date
+%
+mng_timestamp(Date, Stamp) :-
+  mongo_interface(DB),
+  jpl_call(DB, 'getMongoTimestamp', [Date], Stamp).
+
 
 
 %% mng_robot_pose(+Robot, -Pose) is nondet.
@@ -329,8 +421,14 @@ mng_obj_pose_at_time(Obj, SourceFrame, TargetFrame, TimePoint, Pose) :-
 
 %% obj_visible_in_camera(+Obj, ?Camera, +TimePoint) is nondet.
 %
-% Check if Obj is visible by Camera at time TimePoint.
+% Check if Obj is visible by Camera at time TimePoint by reading the camera
+% properties from the robot's SRDL description and computing whether the
+% object center is inside the view frustrum.
 %
+% @param Obj        Instance of an object in the scene
+% @param Camera     Instance of an srdl2comp:Camera
+% @param TimePoint  Instance of a knowrob:TimePoint at which the scene is to be evaluated
+% 
 obj_visible_in_camera(Obj, Camera, TimePoint) :-
 
   findall(Camera, owl_individual_of(Camera, srdl2comp:'Camera'), Cameras),
@@ -368,7 +466,18 @@ obj_visible_in_camera(Obj, Camera, TimePoint) :-
 
 
 
-
+%% obj_blocked_by_in_camera(?Obj, ?Blocker, ?Camera, +TimePoint) is nondet.
+% 
+% Check if the view on Obj from Camera at time TimePoint is blocked by object
+% Blocker by reading the camera properties from the robot's SRDL description
+% and by computing whether the difference in bearing between the two objects'
+% center points from the camera viewpoint is less than ten degrees.
+%
+% @param Obj        Instance of an object in the scene
+% @param Blocker    Instance of an object in the scene
+% @param Camera     Instance of an srdl2comp:Camera
+% @param TimePoint  Instance of a knowrob:TimePoint at which the scene is to be evaluated
+% 
 obj_blocked_by_in_camera(Obj, Blocker, Camera, TimePoint) :-
 
   findall(Camera, owl_individual_of(Camera, srdl2comp:'Camera'), Cameras),
@@ -410,5 +519,104 @@ obj_blocked_by_in_camera(Obj, Blocker, Camera, TimePoint) :-
 
   abs(ObjBearingX - BlkBearingX) < 10/360 * 2 * pi,
   abs(ObjBearingY - BlkBearingY) < 10/360 * 2 * pi.
+
+
+
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
+%
+% designator matches predicate 
+%
+
+
+%% mng_desig_matches(?Designator, +QueryPattern) is nondet.
+%
+% This predicate allows to retrieve designators from the log database that
+% match a query pattern given as nested lists of key-value pairs. An example
+% of such a query pattern may look like 
+% [an, action, [type, navigation], [goal, [a, location, [to, see], [object_acted_on, [type, 'PANCAKEMIX']]]]]
+%
+% @param Designator    Designator instance that matches the pattern
+% @param QueryPattern  Query pattern as nested lists
+% 
+mng_desig_matches(Designator, QueryPattern) :-
+
+  % convert query pattern into list of query strings suitable for MongoDB queries
+  desig_list_to_query(QueryPattern, 'designator', QueryStrings),
+  pairs_keys_values(QueryStrings, QueryKeys, QueryValues),
+
+  jpl_list_to_array(QueryKeys, QueryKeysArr),
+  jpl_list_to_array(QueryValues, QueryValuesArr),
+  
+  % send MongoDB query:
+  mongo_interface(DB),
+  jpl_call(DB, 'getDesignatorsByPattern', [QueryKeysArr, QueryValuesArr], DesigJavaArr),
+
+  jpl_array_to_list(DesigJavaArr, DesigJavaList),
+  
+  member(DesigJava, DesigJavaList),
+  jpl_call(DesigJava, 'get', ['_id'], DesigID),
+  rdf_split_url('http://knowrob.org/kb/cram_log.owl#', DesigID, Designator).
+
+
+%% desig_list_to_query(+ConstrList, +Prefix, -QueryStringList)
+%
+% Generate a list of query strings that can be used to send queries
+% to MongoDB. The keys are chained hierarchically using the dot
+% notation. Both keys and values are converted by the lispify_desig
+% predicate that, by default, converts them to UPPERCASE.
+%
+% @param ConstrList       List of constraints of the form [Key, Val], while Val may either be an atom or a nested list
+% @param Prefix           Prefix to be used for constructing the resulting query strings
+% @param QueryStringList  List of key-value pairs to be used in a MongoDB query, e.g.  'producer.company'-'ABC123'
+%
+
+% special list starts:
+desig_list_to_query(DesigList, Prefix, QueryStringList) :-
+
+    once( (member(Pre, [[an, action], [an, object], [a, location]]),
+           append(Pre, Rest, DesigList)) ),
+
+    findall(QSL, (member(Desig, Rest),
+                  once(desig_list_to_query(Desig, Prefix, QSL))), QueryStringLists),
+
+    flatten(QueryStringLists, QueryStringList).
+
+
+% simple case: normal key/value pair
+desig_list_to_query([Key, Val], Prefix, Str-LispVal) :-
+    atom(Key), atom(Val),
+
+    once(lispify_desig(Key, LispKey)),
+    once(lispify_desig(Val, LispVal)),
+
+    atomic_list_concat([Prefix, '.', LispKey], Str).
+
+
+% recursive case: value is a list, we have to iterate
+desig_list_to_query([Key, Val], Prefix, QueryStringList) :-
+    atom(Key), is_list(Val),
+
+    once(lispify_desig(Key, LispKey)),
+    atomic_list_concat([Prefix, '.', LispKey], NewPrefix),
+    
+    desig_list_to_query(Val, NewPrefix, QueryStringList).
+    
+
+
+%% lispify_desig(?QueryVal, ?LispVal) is det.
+%
+% Convert values in the query language to the corresponding Lisp
+% identifiers. Special transforms can be defined, while the default
+% is just to convert the values to UPPERCASE.
+%
+% @param QueryVal  Identifier in the query language
+% @param LispVal   Identifier used in Lisp and in the MongoDB logs
+%
+
+lispify_desig('object_acted_on', 'OBJ').
+
+% default: do not modify value
+lispify_desig(A, CapA) :-
+  upcase_atom(A, CapA).
 
 

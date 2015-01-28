@@ -147,7 +147,16 @@ public class TFMemory {
 		frames = new HashMap<String, Frame>();
 
 	}
-
+	
+	public DB getDatabase() {
+		return db;
+	}
+	
+	public DB setDatabase(String name) {
+		db = mongoClient.getDB(name);
+		frames = new HashMap<String, Frame>();
+		return db;
+	}
 
 	/* **********************************************************************
 	 * *                            TF LISTENER                             *
@@ -167,9 +176,10 @@ public class TFMemory {
 	protected boolean setTransform(BasicDBObject db_transform) {
 
 		// resolve the frame ID's
-		String childFrameID = assertResolved("", (String) db_transform.get("child_frame_id"));
-		String frameID = assertResolved("", (String) ((BasicDBObject) db_transform.get("header")).get("frame_id"));
-
+		String childFrameID = assertResolved("",
+				getFrameName(db_transform.get("child_frame_id")));
+		String frameID = assertResolved("",
+				getFrameName(((BasicDBObject) db_transform.get("header")).get("frame_id")));
 
 		boolean errorExists = false;
 		if (childFrameID == frameID) {
@@ -194,9 +204,7 @@ public class TFMemory {
 		Frame childFrame  = lookupOrInsertFrame(childFrameID);
 		Frame parentFrame = lookupOrInsertFrame(frameID);
 
-
 		TransformStorage tf = new TransformStorage().readFromDBObject(db_transform, childFrame, parentFrame);
-
 
 		// try to insert tf in corresponding time cache. If result is FALSE, the tf contains old data.
 		if (!childFrame.insertData(tf)) {
@@ -281,21 +289,18 @@ public class TFMemory {
 	 * null if no transformation could be found.
 	 */
 	public StampedTransform lookupTransform(String targetFrameID, String sourceFrameID, Time time) {
-
 		// resolve the source and target IDs
 		String resolvedTargetID = assertResolved("", targetFrameID);
 		String resolvedSourceID = assertResolved("", sourceFrameID);
 
 		// if source and target are the same, return the identity transform
-		if (resolvedSourceID == resolvedTargetID) {
+		if (resolvedSourceID.equals(resolvedTargetID)) {
 			StampedTransform out = StampedTransform.getIdentity();
 			out.timeStamp = time;
 			out.frameID = resolvedSourceID;
 			out.childFrameID = resolvedTargetID;
 			return out;
 		}
-
-
 
 		// load data from DB if the current time point is already in the buffer
 		Frame sourceFrame = verifyDataAvailable(time, resolvedSourceID);
@@ -342,7 +347,6 @@ public class TFMemory {
 		// return transform
 		return out;
 	}
-
 
 	/**
 	 * Check if there are transforms for this time and this frame in the buffer,
@@ -392,9 +396,12 @@ public class TFMemory {
 		Date end   = new Date((long) (date.getTime() + 500));
 
 		// read all frames in time slice
-		query = QueryBuilder.start("__recorded").greaterThanEquals( start )
-							.and("__recorded").lessThan( end )
+		// FIXME: Lookup is to slow.
+		query = QueryBuilder.start("transforms.header.stamp").greaterThanEquals( start )
+							.and("transforms.header.stamp").lessThan( end )
 							.get();
+		// TODO: This 'quick' lookup is ok for Yuen's experiment
+		//DBObject query = new BasicDBObject("transforms.header.stamp", start);
 
 		// TODO: check if we can read only the latest transforms for the child frame
 		// -> should be feasible since verifyDataAvailable should load data when needed,
@@ -406,10 +413,9 @@ public class TFMemory {
 		// 		.get();
 
 
-		// read only transforms and time stamp
+		// read only transforms
 		DBObject cols  = new BasicDBObject();
-		cols.put("transforms",  1 );
-		cols.put("__recorded",  1 );
+		cols.put("transforms",  1);
 
 		DBCursor cursor = coll.find(query, cols );
 
@@ -421,6 +427,7 @@ public class TFMemory {
 		} finally {
 			cursor.close();
 		}
+		
 		return res;
 	}
 
@@ -693,5 +700,16 @@ public class TFMemory {
 		}  else {
 			return "/" + frameID;
 		}
+	}
+	
+	/**
+	 * Makes sure that frame name starts with '/'
+	 */
+	private String getFrameName(Object obj) {
+		String out = obj.toString();
+		if(out.startsWith("/"))
+			return out;
+		else
+			return "/"+out;
 	}
 }

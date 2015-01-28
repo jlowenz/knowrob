@@ -1,10 +1,16 @@
 package org.knowrob.interfaces.mongo;
 
 import java.net.UnknownHostException;
+import java.sql.Timestamp;
+import java.text.DecimalFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
+import java.util.regex.Pattern;
 
 import javax.vecmath.Matrix4d;
 
@@ -27,11 +33,10 @@ import com.mongodb.QueryBuilder;
 
 public class MongoDBInterface {
 
-	MongoClient mongoClient;
-	DB db;
-
 	TFMemory mem;
 
+	final SimpleDateFormat mongoDateFormat;
+	
 	/**
 	 * Constructor
 	 *
@@ -42,6 +47,10 @@ public class MongoDBInterface {
 
 		String host = "localhost";
 		int port = 27017;
+		
+		// Format of dates as saved in mongo
+		mongoDateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+		mongoDateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
 		
 		// check if MONGO_PORT_27017_TCP_ADDR and MONGO_PORT_27017_TCP_PORT 
 		// environment variables are set
@@ -55,14 +64,16 @@ public class MongoDBInterface {
         	port = Integer.valueOf(env.get("MONGO_PORT_27017_TCP_PORT"));
         }
         
-		try {
-			mongoClient = new MongoClient(host, port);
-			db = mongoClient.getDB("roslog");
-
-		} catch (UnknownHostException e) {
-			e.printStackTrace();
-		}
 		mem = TFMemory.getInstance();
+	}
+	
+	public DB getDatabase() {
+		return mem.getDatabase();
+	}
+	
+	public DB setDatabase(String name) {
+		mem.setDatabase(name);
+		return getDatabase();
 	}
 
 
@@ -102,7 +113,8 @@ public class MongoDBInterface {
 	 * @return Instance of a Designator
 	 */
 	public Designator getDesignatorByID(String designator) {
-		DBCollection coll = db.getCollection("logged_designators");
+		
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		DBObject query = QueryBuilder
 				.start("designator._id").is(designator).get();
 
@@ -121,6 +133,47 @@ public class MongoDBInterface {
 		
 		return null;
 	}
+	
+	/**
+	 * Read designators based on the given filter pattern. The strings in the
+	 * keys and values lists are AND-joined to form query expressions for MongoDB.
+	 * 
+	 * K = ['designator.TYPE','designator.GOAL.TO','designator.GOAL.OBJ.TYPE']
+	 * V = [NAVIGATION,SEE,PANCAKEMIX].
+	 * 
+	 * @param keys Strings describing fields in a document using the dot notation 
+	 * @param values Strings of values that these fields need to have
+	 * @return List of @Designator data structures that match the query expressions
+	 */
+	public Designator[] getDesignatorsByPattern(String[] keys, String[] values) {
+		
+		DBCollection coll = getDatabase().getCollection("logged_designators");
+		
+		QueryBuilder qb = QueryBuilder.start("designator").exists("_id");
+		for(int i=0; i<keys.length; i++) {
+			qb = qb.and(keys[i]).is(Pattern.compile(values[i],Pattern.CASE_INSENSITIVE)); // pattern for case insensitive matching
+		}
+		
+		DBObject query = qb.get();
+		
+		DBObject cols  = new BasicDBObject();
+		cols.put("__recorded", 1 );		
+		cols.put("designator", 1 );
+
+		DBCursor cursor = coll.find(query, cols);
+
+		Designator[] res = new Designator[cursor.size()];
+		int r=0;
+		
+		while(cursor.hasNext()) {
+			DBObject row = cursor.next();
+			Designator desig = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
+			res[r++]=desig;
+		}
+		cursor.close();
+		
+		return res;
+	}
 
 
 	/**
@@ -132,7 +185,7 @@ public class MongoDBInterface {
 	public Designator latestUIMAPerceptionBefore(int posix_ts) {
 
 		Designator desig = null;
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 
 		// read all events up to one minute before the time
 		Date start = new ISODate((long) 1000 * (posix_ts - 60) ).getDate();
@@ -172,7 +225,7 @@ public class MongoDBInterface {
 	public List<Date> getUIMAPerceptionTimes(String object) {
 
 		List<Date> times = new ArrayList<Date>();
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 
 		// TODO: This will always return a single result since the ID is unique
 		DBObject query = QueryBuilder
@@ -204,7 +257,7 @@ public class MongoDBInterface {
 	@SuppressWarnings("unchecked")
 	public Matrix4d getDesignatorLocation(String id) {
 		Matrix4d poseMatrix = null;
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		DBObject query = QueryBuilder
 				.start("designator._id").is(id).get();
 
@@ -232,25 +285,78 @@ public class MongoDBInterface {
 		return poseMatrix;
 	}
 
+	/**
+	 * Computes a timestamp that corresponds to the specified date.
+	 * date format must be as follows: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+	 * @throws ParseException 
+	 */
+	public String getMongoTimestamp(String date) throws ParseException {
+		// Avoid scientific notation
+		DecimalFormat df = new DecimalFormat("#");
+		df.setMaximumFractionDigits(9);
+		return df.format(mongoDateFormat.parse(date).getTime()/1000.0);
+	}
+
 	public static void main(String[] args) {
 
 //		MongoDBInterface m = new MongoDBInterface();
-
+//
+//		Designator d = m.getDesignatorByID("designator_C4yixt3iPwKHCt");
+//		
+//		
+//		ArrayList<String> k = new ArrayList<String>();
+//		ArrayList<String> v = new ArrayList<String>();
+//		
+//		
+//		k.add("designator.TYPE");
+//		k.add("designator.GOAL.TO");
+//		k.add("designator.GOAL.OBJ.TYPE");
+//
+//		v.add("NAVIGATION");
+//		v.add("SEE");
+//		v.add("PANCAKEMIX");
+//		
+//		Designator[] res = m.getDesignatorsByPattern(
+//				new String[]{"designator.TYPE", "designator.GOAL.TO", "designator.GOAL.OBJ.TYPE"}, 
+//				new String[]{"navigation", "see", "PANCAKEMIX"});
+//		
+//		System.out.println(res.length);
 
 		// test transformation lookup based on DB information
 
 //		Timestamp timestamp = Timestamp.valueOf("2013-07-26 14:27:22.0");
-//		Time t = new Time(1377766521);
-//		Time t = new Time(1383143712); // no
-//		Time t = new Time(1383144279);  //1
+//		Time t = new Time(1396512420);
+//		Time t = new Time(1396512422); // no
+//		Time t = new Time(1396512424);  //1
+
+		TFMemory tf = TFMemory.getInstance();
+
+		try {
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+			Date date = sdf.parse("2014-04-30 13:31:51.224");
+			Time t = new Time(date.getTime()/1000.0);
+			System.out.println("UTC " + date + " -> " + date.getTime()/1000.0);
+			sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
+			date = sdf.parse("2014-04-30 13:31:51.224");
+			System.out.println("GMT " + date + " -> " + date.getTime()/1000.0);
+			
+			t = new Time(date.getTime()/1000.0);
+			
+			System.out.println(tf.lookupTransform("/map", "/RightHand", t));
+		}
+		catch (ParseException e) {
+			e.printStackTrace();
+		}
+		
+		Timestamp timestamp = Timestamp.valueOf("2014-08-27 13:30:35.0");
+		Time t = new Time(timestamp.getTime());  //1
+		System.out.println(timestamp.getTime());
 
 
-
-		Time t_st  = new Time(1392799358);
-		Time t_end = new Time(1392799363);
+		Time t_st  = new Time(1396512420);
+		Time t_end = new Time(1396512422);
 
 		long t0 = System.nanoTime();
-		TFMemory tf = TFMemory.getInstance();
 		System.out.println(tf.lookupTransform("/base_link", "/l_gripper_palm_link", t_end));
 		long t1 = System.nanoTime();
 		System.out.println(tf.lookupTransform("/base_link", "/l_gripper_palm_link", t_end));
@@ -258,9 +364,9 @@ public class MongoDBInterface {
 		System.out.println(tf.lookupTransform("/base_link", "/l_gripper_palm_link", t_st));
 		long t3 = System.nanoTime();
 
-		double first  = (t1-t0)/ 1E9;
-		double second = (t2-t1)/ 1E9;
-		double third  = (t3-t2)/ 1E9;
+		double first  = (t1-t0)/ 1E6;
+		double second = (t2-t1)/ 1E6;
+		double third  = (t3-t2)/ 1E6;
 		
 		System.out.println("Time to look up first transform: " + first + "ms");
 		System.out.println("Time to look up second transform: " + second + "ms");
