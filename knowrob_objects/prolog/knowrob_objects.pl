@@ -25,6 +25,10 @@
       storagePlaceForBecause/3,
       current_object_pose/2,
       object_pose_at_time/3,
+      object_color/2,
+      object_dimensions/4,
+      object_assert_dimensions/4,
+      object_assert_color/2,
       rotmat_to_list/2,
       create_joint_information/9,
       update_joint_information/7,
@@ -94,6 +98,11 @@
     storagePlaceForBecause(r,r,r),
     current_object_pose(r,-),
     current_object_pose(r,r,-),
+    object_pose_at_time(r,r,?),
+    object_color(r, ?),
+    object_dimensions(r, ?, ?, ?),
+    object_assert_dimensions(r, +, +, +),
+    object_assert_color(r, +),
     rotmat_to_list(r,-),
     comp_orientation(r, r),
     instantiate_at_position(r,+,r),
@@ -120,9 +129,35 @@
 :- rdf_db:rdf_register_ns(xsd, 'http://www.w3.org/2001/XMLSchema#', [keep(true)]).
 
 
-
+%% storagePlaceFor(St, ObjT) is nondet.
+%
+% Computes the nominal storage location of an object based on assertions for
+% typePrimaryFunction-StoragePlaceFor for any of its superclasses. For example,
+% a Refrigerator is asserted as ...-StoragePlaceFor perishable items, so
+% instances of Refrigerator will therefore be returned for e.g. dairy products
+% or meat products.
+%
+% @param St       Instance of a knowrob:'StorageConstruct'
+% @param Obj      Object class or instance
+% 
 storagePlaceFor(St, ObjT) :-
   storagePlaceForBecause(St, ObjT, _).
+
+%% storagePlaceForBecause(St, ObjType, ObjT) is nondet.
+%
+% Computes the nominal storage location of an object based on assertions for
+% typePrimaryFunction-StoragePlaceFor for any of its superclasses. For example,
+% a Refrigerator is asserted as ...-StoragePlaceFor perishable items, so
+% instances of Refrigerator will therefore be returned for e.g. dairy products
+% or meat products.
+%
+% In addition to the storage place, this predicate further returns the superclass
+% of Obj for which this information is asserted (e.g. Perishable)
+%
+% @param St       Instance of a knowrob:'StorageConstruct'
+% @param Obj      Object class or instance
+% @param ObjType  Class for which information about the storage place has been asserted
+%
 
 % two instances
 storagePlaceForBecause(St, Obj, ObjT) :-
@@ -140,20 +175,27 @@ storagePlaceForBecause(St, ObjType, ObjT) :-
 
 
 
-%% current_object_pose(+ObjInstance, -PoseList) is det.
+%% current_object_pose(+ObjInstance, -PoseList) is nondet.
 %
 % Get the pose of an object based on the latest perception
 %
+% @param Obj       Instance of a subclass of SpatialThing-Localized
+% @param PoseList  Row-based representation of the object's 4x4 pose matrix as list[16]
+% 
 current_object_pose(Obj, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
   rdf_triple('http://knowrob.org/kb/knowrob.owl#orientation',Obj,Pose),!,
   rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]).
 
 
-%% object_pose_at_time(+ObjInstance, +Time, -PoseList) is det.
+%% object_pose_at_time(+ObjInstance, +Time, -PoseList) is nondet.
 %
 % Get the pose of an object based on the latest perception before Time
 %
+% @param Obj       Instance of a subclass of SpatialThing-Localized
+% @param Time      Instance of a TimePoint
+% @param PoseList  Row-based representation of the object's 4x4 pose matrix as list[16]
+% 
 object_pose_at_time(Obj, Time, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
   object_detection(Obj, Time, Detection),
@@ -162,10 +204,13 @@ object_pose_at_time(Obj, Time, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21
   rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]).
 
 
-%% rotmat_to_list(+RotMatInstance, -PoseList) is det.
+%% rotmat_to_list(+RotMatInstance, -PoseList) is nondet.
 %
 % Read the pose values for an instance of a rotation matrix
 %
+% @param Obj       Instance of a subclass of SpatialThing-Localized
+% @param PoseList  Row-based representation of the object's 4x4 pose matrix as list[16]
+% 
 rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
     rdf_triple('http://knowrob.org/kb/knowrob.owl#m00',Pose,M00literal), strip_literal_type(M00literal, M00a), term_to_atom(M00, M00a),
@@ -191,9 +236,62 @@ rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23
 
 
 
+%% object_dimensions(?Obj, ?Depth, ?Width, ?Height) is nondet.
+%
+% Get the width, depth and height of the object.
+%
+% @param Obj    Instance of a subclass of EnduringThing-Localized
+% @param Depth  Depth of the bounding box (x-dimension)
+% @param Width  Width of the bounding box (y-dimension)
+% @param Height Height of the bounding box (z-dimension)
+% 
+object_dimensions(Obj, Depth, Width, Height) :-
 
+  rdf_has(Obj, knowrob:depthOfObject,  literal(type(_, Depth))),
+  rdf_has(Obj, knowrob:widthOfObject,  literal(type(_, Width))),
+  rdf_has(Obj, knowrob:heightOfObject, literal(type(_, Height))).
 
+%% object_assert_dimensions(+Obj, +H, +W, +D) is nondet.
+%
+% Assert object dimension properties.
+%
+% @param Obj    Instance of a subclass of EnduringThing-Localized
+% @param Depth  Depth of the bounding box (x-dimension)
+% @param Width  Width of the bounding box (y-dimension)
+% @param Height Height of the bounding box (z-dimension)
+% 
+object_assert_dimensions(Obj, H, W, D) :-
+    rdf_assert(Obj,knowrob:'depthOfObject',literal(type(xsd:float, D))),
+    rdf_assert(Obj,knowrob:'widthOfObject',literal(type(xsd:float, W))),
+    rdf_assert(Obj,knowrob:'heightOfObject',literal(type(xsd:float, H))).
 
+%% object_color(?Obj, ?Col) is nondet.
+%
+% Get the main color of the object.
+%
+% @param Obj  Instance of a subclass of EnduringThing-Localized
+% @param Col  Main color of the object
+% 
+object_color(Obj, Col) :-
+  rdf_has(Obj, knowrob:mainColorOfObject, literal(type(_, Col))).
+
+%% object_color(?Obj, ?Col) is nondet.
+%
+% Assert object main color property.
+%
+% @param Obj  Instance of a subclass of EnduringThing-Localized
+% @param Col  Main color of the object
+% 
+object_assert_color(ObjInstance, [R,G,B]) :-
+  object_assert_color(ObjInstance, [R,G,B,1.0]).
+
+object_assert_color(ObjInstance, [R,G,B,A]) :-
+  atomic_list_concat([R,G,B,A], ' ', ColRGBA),
+  object_assert_color(ObjInstance, ColRGBA).
+    
+object_assert_color(ObjInstance, Col) :-
+   atom(Col),
+   rdf_assert(ObjInstance, knowrob:'mainColorOfObject',literal(type(xsd:string, Col))).
 
 %% instantiate_at_position(+ObjClassDef, +PoseList, -ObjInst) is det.
 %

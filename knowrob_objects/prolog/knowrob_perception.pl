@@ -25,7 +25,6 @@
       create_pose/2,
       create_perception_instance/2,
       create_perception_instance/3,
-      create_object_instance/3,
       set_object_perception/2,
       set_perception_pose/2,
       create_pose/2,
@@ -49,8 +48,6 @@
     create_object_perception(r,+,t,-),
     check_ns(r,-).
 
-:- print("Hello there...").
-
 %% check_ns(+Entity, -NSEntity)
 %
 % Utility predicate for verifying the KnowRob OWL namespace. If the
@@ -61,24 +58,34 @@ check_ns(Entity, NSEntity) :-
     sub_atom_icasechk(Entity, _, '#') -> NSEntity = Entity; 
     atom_concat('http://knowrob.org/kb/knowrob.owl#', Entity, NSEntity).
 
+
 %% create_object_perception(+ObjClass, +ObjPose, +PerceptionTypes, -ObjInst)
 %
-% Convenience predicate: create the complete structure of object instance,
-% perception instance, and the pose matrix where the object was perceived.
+% Create the complete structure of an object perception, including the object
+% instance, the perception instance, and the pose matrix where the object was
+% perceived.
 %
+% @param ObjClass          Type of the perceived object
+% @param ObjPose           Pose of the perceived object as row-based list containing the 4x4 rotation matrix
+% @param PerceptionTypes   List of perception types, e.g. 'VisualPerception' (only the class names, no namespaces)
+% @param ObjInst           Object instance that has been created by this predicate
+% 
 create_object_perception(ObjClass, ObjPose, PerceptionTypes, ObjInst) :-
     rdf_instance_from_class(ObjClass, ObjInst),
     create_perception_instance(PerceptionTypes, Perception),
     set_object_perception(ObjInst, Perception),
     set_perception_pose(Perception, ObjPose).
 
-%% create_perception_instance(-Perception) is det.
-%% create_perception_instance(+ModelTypes, -Perception) is det.
+%% create_perception_instance(PerceptionTypes, Perception) is det.
+%% create_perception_instance(PerceptionTypes, ModelTypes, Perception) is det.
 %
-% Create perception instance having all the types in PerceptionTypes and set
-% model types if given
+% Create perception instance having all the types in PerceptionTypes, and set
+% the types of recognition models that have been used for perceiving the object,
+% if given.
 %
-
+% @param PerceptionTypes   List of perception types, e.g. 'VisualPerception' (only the class names, no namespaces)
+% @param PerceptionInst    Perception instance that has been created by this predicate
+% 
 create_perception_instance(PerceptionTypes, Perception) :-
 
   % create individual from first type in the list
@@ -122,6 +129,7 @@ create_perception_instance(PerceptionTypes, ModelTypes, Perception) :-
   get_timepoint(TimePoint),
   rdf_assert(Perception, knowrob:startTime, TimePoint).
 
+
 %% create_object_instance(+ObjTypes, +ObjID, -Obj) is det.
 %
 % Create object instance having all the types in ObjTypes
@@ -146,11 +154,13 @@ create_object_instance(ObjTypes, ObjID, Obj) :-
     rdf_assert(Obj, rdf:type, TypeAtomKnowrob)
   ).
 
-
 %% set_object_perception(?A, ?B) is det.
 %
 % Link the object instance to the perception instance
 %
+% @param Object        Object instance
+% @param Perception    Perception instance
+% 
 set_object_perception(Object, Perception) :-
 
   % add perception to linked list of object detections,
@@ -169,37 +179,46 @@ set_object_perception(Object, Perception) :-
 
 %% set_perception_pose(+Perception, +PoseList) is det.
 %
-% Set the pose of an object perception
+% Set the pose of an object perception to the value given as PoseList
 %
+% @param Perception  Perception instance
+% @param PoseList    Pose of the perceived object as row-based list containing the 4x4 rotation matrix
+% 
 set_perception_pose(Perception, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
-  create_pose([M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33], Loc),
-  rdf_assert(Perception, knowrob:eventOccursAt, Loc).
+  create_pose([M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33], PoseInst),
+  rdf_assert(Perception, knowrob:eventOccursAt, PoseInst).
 
+%% create_pose(PoseList, PoseInst) is det.
+%
+% Set the pose of an object perception to the value given as PoseList
+%
+% @param Perception  Instance of a RotationMatrix3D with all elements asserted as datatype properties
+% @param PoseList    Pose as row-based list containing the 4x4 rotation matrix
+% 
+create_pose([M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33], PoseInst) :-
 
-create_pose([M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33], Loc) :-
+  rdf_instance_from_class(knowrob:'RotationMatrix3D', PoseInst),
 
-  rdf_instance_from_class(knowrob:'RotationMatrix3D', Loc),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m00',literal(type(xsd:float, M00))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m01',literal(type(xsd:float, M01))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m02',literal(type(xsd:float, M02))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m03',literal(type(xsd:float, M03))),
 
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m00',literal(type(xsd:float, M00))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m01',literal(type(xsd:float, M01))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m02',literal(type(xsd:float, M02))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m03',literal(type(xsd:float, M03))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m10',literal(type(xsd:float, M10))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m11',literal(type(xsd:float, M11))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m12',literal(type(xsd:float, M12))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m13',literal(type(xsd:float, M13))),
 
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m10',literal(type(xsd:float, M10))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m11',literal(type(xsd:float, M11))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m12',literal(type(xsd:float, M12))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m13',literal(type(xsd:float, M13))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m20',literal(type(xsd:float, M20))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m21',literal(type(xsd:float, M21))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m22',literal(type(xsd:float, M22))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m23',literal(type(xsd:float, M23))),
 
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m20',literal(type(xsd:float, M20))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m21',literal(type(xsd:float, M21))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m22',literal(type(xsd:float, M22))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m23',literal(type(xsd:float, M23))),
-
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m30',literal(type(xsd:float, M30))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m31',literal(type(xsd:float, M31))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m32',literal(type(xsd:float, M32))),
-  rdf_assert(Loc,'http://knowrob.org/kb/knowrob.owl#m33',literal(type(xsd:float, M33))).
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m30',literal(type(xsd:float, M30))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m31',literal(type(xsd:float, M31))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m32',literal(type(xsd:float, M32))),
+  rdf_assert(PoseInst,'http://knowrob.org/kb/knowrob.owl#m33',literal(type(xsd:float, M33))).
 
 
 
@@ -208,8 +227,10 @@ create_pose([M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M3
 %
 % Set the covariance of an object perception
 %
+% @param Perception  Instance of a CovarianceMatrix with all elements asserted as datatype properties
+% @param PoseList    Row-based list containing the 6x6 covariance matrix
+% 
 set_perception_cov(Perception, [M00, M01, M02, M03, M04, M05, M10, M11, M12, M13, M14, M15, M20, M21, M22, M23, M24, M25, M30, M31, M32, M33, M34, M35, M40, M41, M42, M43, M44, M45, M50, M51, M52, M53, M54, M55]) :-
-
 
   rdf_instance_from_class(knowrob:'CovarianceMatrix', Cov),
 
@@ -256,29 +277,4 @@ set_perception_cov(Perception, [M00, M01, M02, M03, M04, M05, M10, M11, M12, M13
   rdf_assert(Cov,'http://knowrob.org/kb/knowrob.owl#m53',literal(type(xsd:float, M55))),
 
   rdf_assert(Perception, knowrob:covariance, Cov).
-
-
-
-
-% % %% compatible_obj_types(?A, ?B) is det.
-% % %
-% % % Check if the CoP results A and B are compatible.
-% % %
-% % % This predicate maps the returned classes against KnowRob classes and determines
-% % % if these classes are disjoint (i.e. the results are incompatible)
-% % %
-% % % Example: compatible_obj_types('green', 'Knife')  are compatible results
-% % %          compatible_obj_types('green', 'orange') are incompatible
-% % %
-% % % @param CopIdentifier     Atom identifying something in CoP
-% % % @param KnowrobIdentifier Corresponding atom identifying something in KnowRob
-% % %
-% % compatible_obj_types(A, B) :-
-% %   ((nonvar(A))->(downcase_atom(A, Alower));(Alower=A)),
-% %   ((nonvar(B))->(downcase_atom(B, Blower));(Blower=B)),
-% % 
-% %   cop_to_knowrob(Alower, Akr),
-% %   cop_to_knowrob(Blower, Bkr),
-% %   not(owl_disjoint_with(Akr, Bkr)).
-
 

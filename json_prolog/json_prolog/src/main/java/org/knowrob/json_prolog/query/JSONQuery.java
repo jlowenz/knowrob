@@ -27,13 +27,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package org.knowrob.json_prolog;
+package org.knowrob.json_prolog.query;
 
 import net.sf.json.*;
 import net.sf.json.util.JSONUtils;
 import jpl.JPLException;
-import jpl.Query;
 import jpl.Term;
+
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -51,11 +51,11 @@ public class JSONQuery {
     private static final long serialVersionUID = 1L;
   }
 
-  static public Query makeQuery(String json) throws InvalidJSONQuery {
+  static public ThreadedQuery makeQuery(String json) throws InvalidJSONQuery {
     try {
       JSONArray json_query = JSONArray.fromObject(json);
 
-      return new Query(makeCompoundTerm(json_query));
+      return new ThreadedQuery(makeCompoundTerm(json_query));
     } catch (Exception e) {
       throw new InvalidJSONQuery("Unable to parse JSON query: " + json + ", Exception: " + e.toString());
     }
@@ -70,7 +70,7 @@ public class JSONQuery {
       Map.Entry<String, Term> e = it.next();
 
       if (e.getValue().isFloat())
-        result.put(e.getKey(), e.getValue().floatValue());
+        result.put(e.getKey(), e.getValue().doubleValue());
       else if (e.getValue().isInteger())
         result.put(e.getKey(), e.getValue().intValue());
       else if (e.getValue().isCompound() && !e.getValue().isAtom()) {
@@ -114,7 +114,7 @@ public class JSONQuery {
       throw new InvalidJSONQuery("Predicate encoding wrong. Found more than one ':' in " + predicate);
   }
 
-  static Term[] decodeJSONArray(JSONArray val) throws InvalidJSONQuery {
+  public static Term[] decodeJSONArray(JSONArray val) throws InvalidJSONQuery {
     return decodeJSONArray(val, 0);
   }
 
@@ -169,7 +169,7 @@ public class JSONQuery {
     return new jpl.Integer(val);
   }
 
-  static Term decodeJSONValue(JSONObject val) throws InvalidJSONQuery {
+  public static Term decodeJSONValue(JSONObject val) throws InvalidJSONQuery {
     if (val.has("variable"))
       return new jpl.Variable(val.getString("variable"));
     else if (val.has("term"))
@@ -205,7 +205,7 @@ public class JSONQuery {
     JSONArray result = new JSONArray();
     for (int i = 0; i < term_list.length; i++) {
       if (term_list[i].isFloat())
-        result.element(term_list[i].floatValue());
+        result.element(term_list[i].doubleValue());
       else if (term_list[i].isInteger())
         result.element(term_list[i].intValue());
       else if (term_list[i].isAtom())

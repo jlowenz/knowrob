@@ -1,62 +1,80 @@
-/** <module> knowrob_vis
-
-  Description:
-    Module providing visualisation capabilities
-
-  Copyright (C) 2013 by Moritz Tenorth
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 3 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-@author Moritz Tenorth
-@author Daniel Beßler
-@license GPL
-*/
-
+%   Description:
+%     Module providing visualisation capabilities
+% 
+%   Copyright (C) 2013 by Moritz Tenorth
+% 
+%   This program is free software; you can redistribute it and/or modify
+%   it under the terms of the GNU General Public License as published by
+%   the Free Software Foundation; either version 3 of the License, or
+%   (at your option) any later version.
+% 
+%   This program is distributed in the hope that it will be useful,
+%   but WITHOUT ANY WARRANTY; without even the implied warranty of
+%   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+%   GNU General Public License for more details.
+% 
+%   You should have received a copy of the GNU General Public License
+%   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+% 
+% @author Moritz Tenorth
+% @author Daniel Beßler
+% @license GPL
+% 
 :- module(knowrob_vis,
     [
       visualisation_canvas/0,
+      visualisation_server/0,
       clear_canvas/0,
+      clear_trajectories/0,
+      camera_pose/2,
+      add_agent_visualization/1,
+      add_agent_visualization/2,
+      add_agent_visualization/3,
+      add_agent_visualization/4,
+      add_agent_visualization/5,
+      add_stickman_visualization/1,
+      add_stickman_visualization/2,
+      add_stickman_visualization/3,
+      add_stickman_visualization/4,
+      add_stickman_visualization/5,
+      remove_agent_visualization/1,
+      remove_agent_visualization/2,
       add_object/1,
       add_object/2,
+      add_objects/1,
       add_object_with_children/1,
       add_object_with_children/2,
+      update_object/1,
+      update_object/2,
+      update_object_with_children/1,
+      update_object_with_children/2,
       remove_object/1,
       remove_object_with_children/1,
+      add_text/3,
+      add_text/1,
       highlight_object/1,
+      highlight_object_mesh/1,
       highlight_object/2,
       highlight_object/5,
       highlight_object_with_children/1,
       highlight_object_with_children/2,
       highlight_trajectory/4,
       remove_highlight/1,
+      remove_mesh_highlight/1,
       remove_highlight_with_children/1,
       reset_highlight/0,
+      add_avg_trajectory/5,
       add_trajectory/3,
       add_trajectory/4,
       add_trajectory/5,
       remove_trajectory/1,
-      add_human_pose/2,
-      add_human_pose/3,
-      add_human_pose/4,
-      remove_human_pose/0,
-      remove_human_pose/1,
       diagram_canvas/0,
       clear_diagram_canvas/0,
       add_diagram/9,
       add_barchart/3,
       add_piechart/3,
-      remove_diagram/1
+      remove_diagram/1,
+      trajectory_length/4
     ]).
 
 :- use_module(library('semweb/rdfs')).
@@ -66,32 +84,69 @@
 
 
 :- rdf_meta add_object(r),
+            camera_pose(r,r),
+            add_agent_visualization(r),
+            add_agent_visualization(r,r),
+            add_agent_visualization(r,r,r),
+            add_agent_visualization(r,r,r,r),
+            add_agent_visualization(r,r,r,r,r),
+            add_stickman_visualization(r),
+            add_stickman_visualization(r,r),
+            add_stickman_visualization(r,r,r),
+            add_stickman_visualization(r,r,r,r),
+            add_stickman_visualization(r,r,r,r,r),
+            remove_agent_visualization(r),
+            remove_agent_visualization(r,r),
             add_object(r,r),
             add_object_with_children(r),
             add_object_with_children(r,r),
+            update_object(r,r),
+            update_object_with_children(r),
+            update_object_with_children(r,r),
             remove_object(r),
             remove_object_with_children(r),
+            add_text(r,r,r),
+            add_text(r),
             highlight_object(r),
+            highlight_object_mesh(r),
             highlight_object(r,?),
             highlight_object(r,?,?,?,?,?),
             highlight_object_with_children(r),
             highlight_object_with_children(r,?),
             highlight_trajectory(r,r,r,?),
             remove_highlight(r),
+            remove_mesh_highlight(r),
             remove_highlight_with_children(r),
             add_diagram(+,+,+,+,+,+,+,+,+),
             remove_diagram(+),
-            add_human_pose(r),
-            add_human_pose(r,r),
-            add_human_pose(r,r,r),
-            add_human_pose(r,r,r,r),
-            remove_human_pose(r),
-            remove_human_pose(r,r),
+            add_avg_trajectory(r,r,r,r,r),
             add_trajectory(r,r,r),
             add_trajectory(r,r,r,+),
             add_trajectory(r,r,r,+,+),
-            remove_trajectory(r).
+            remove_trajectory(r),
+            trajectory_length(r,r,r,+).
 
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
+%
+% Visualization server management
+%
+
+%% visualisation_server is det.
+%
+% Launch the visualization server
+%
+visualisation_server :-
+  visualisation_server(_).
+  
+visualisation_server(WebServer) :-
+    (\+ current_predicate(v_server, _)),
+    jpl_new('org.knowrob.vis.WebServer', [], WebServer),
+    jpl_list_to_array(['org.knowrob.vis.WebServer'], Arr),
+    jpl_call('org.knowrob.utils.ros.RosUtilities', runRosjavaNode, [WebServer, Arr], _),
+    assert(v_server(WebServer)),!.
+visualisation_server(WebServer) :-
+    current_predicate(v_server, _),
+    v_server(WebServer).
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 %
@@ -128,7 +183,94 @@ clear_canvas :-
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 %
-% Add / remove objects and trajectories
+% Camera
+%
+
+camera_pose(Position, Orientation) :-
+    visualisation_canvas(Canvas),
+    lists_to_arrays(Position, PositionArr),
+    lists_to_arrays(Orientation, OrientationArr),
+    jpl_call(Canvas, 'setCameraPose', [PositionArr, OrientationArr], _).
+
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
+%
+% Agents
+%
+
+%% add_agent_visualization(+Individual) is det.
+%% add_agent_visualization(+Individual, +Timepoint) is det.
+%% add_agent_visualization(+Identifier, +Individual, +Timepoint) is det.
+%% add_agent_visualization(+Identifier, +Individual, +Timepoint, +Suffix) is det.
+%% add_agent_visualization(+Identifier, +Individual, +Timepoint, +Suffix, +TfPrefix) is det.
+%
+% Reads joint poses from logged tf data and visualizes them in the
+% Web-based canvas.
+%
+
+add_agent_visualization(Individual) :-
+    get_timepoint(Timepoint),
+    add_agent_visualization('_', Individual, Timepoint, '').
+
+add_agent_visualization(Individual, Timepoint) :-
+    add_agent_visualization('_', Individual, Timepoint, '').
+
+add_agent_visualization(Identifier, Individual, Timepoint) :-
+    add_agent_visualization(Identifier, Individual, Timepoint, '').
+    
+add_agent_visualization(Identifier, Individual, Timepoint, Suffix) :-    
+    robot_tf_prefix(Individual,TfPrefix),
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'visualizeAgent', [Identifier,Individual,Timepoint,Suffix,TfPrefix,0], _).
+    
+add_agent_visualization(Identifier, Individual, Timepoint, Suffix, TfPrefix) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'visualizeAgent', [Identifier,Individual,Timepoint,Suffix,TfPrefix,0], _).
+
+%% add_stickman_visualization(+Individual) is det.
+%% add_stickman_visualization(+Individual, +Timepoint) is det.
+%% add_stickman_visualization(+Identifier, +Individual, +Timepoint) is det.
+%% add_stickman_visualization(+Identifier, +Individual, +Timepoint, +Suffix) is det.
+%% add_stickman_visualization(+Identifier, +Individual, +Timepoint, +Suffix, +Prefix) is det.
+%
+% Reads joint poses from logged tf data and visualizes them in the
+% Web-based canvas.
+%
+
+add_stickman_visualization(Individual) :-
+    get_timepoint(Timepoint),
+    add_stickman_visualization('_', Individual, Timepoint, '').
+
+add_stickman_visualization(Individual, Timepoint) :-
+    add_stickman_visualization('_', Individual, Timepoint, '').
+
+add_stickman_visualization(Identifier, Individual, Timepoint) :-
+    add_stickman_visualization(Identifier, Individual, Timepoint, '').
+    
+add_stickman_visualization(Identifier, Individual, Timepoint, Suffix) :-
+    robot_tf_prefix(Individual,TfPrefix),
+    add_stickman_visualization(Identifier, Individual, Timepoint, Suffix,TfPrefix).
+
+    
+add_stickman_visualization(Identifier, Individual, Timepoint, Suffix, TfPrefix) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'visualizeAgent', [Identifier,Individual,Timepoint,Suffix,TfPrefix,1], _).
+
+    
+%% remove_agent_visualization(+Individual) is det.
+%% remove_agent_visualization(+Identifier, +Individual) is det.
+%
+% Removes agent pose visualizations from the visualization canvas.
+%
+remove_agent_visualization(Individual) :-
+    remove_agent('_', Individual).
+remove_agent_visualization(Identifier, Individual) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'removeAgent', [Identifier,Individual], _).
+
+
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
+%
+% Add / update / remove objects and trajectories
 %
 
 %% add_object(+Identifier) is nondet.
@@ -151,6 +293,21 @@ add_object(Identifier) :-
 add_object(Identifier, Time) :-
     visualisation_canvas(Canvas),
     jpl_call(Canvas, 'addObject', [Identifier, Time], _).
+
+
+%% add_objects(+Identifiers) is nondet.
+%
+% Add all elements of the list 'objects' to the scene
+%
+% @param Identifier Object identifier, eg. "http://knowrob.org/kb/ias_semantic_map.owl#F360-Containers-revised-walls"
+%
+add_objects(Identifiers) :-
+
+    get_timepoint(Time),
+    jpl_list_to_array(Identifiers, IdArray),
+
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'addObjects', [IdArray, Time], _).
 
 
 
@@ -178,6 +335,54 @@ add_object_with_children(Identifier, Time) :-
     jpl_call(Canvas, 'addObjectWithChildren', [Identifier, Time], _).
 
 
+
+%% update_object(+Identifier) is nondet.
+%
+% Update object in the scene
+%
+% @param Identifier Object identifier, eg. "http://knowrob.org/kb/ias_semantic_map.owl#F360-Containers-revised-walls"
+%
+update_object(Identifier) :-
+    get_timepoint(Time),
+    update_object(Identifier, Time).
+
+
+%% update_object(+Identifier, +Time) is nondet.
+%
+% Update object in the scene with its position at time 'Time'
+%
+% @param Identifier Object identifier, eg. "http://knowrob.org/kb/ias_semantic_map.owl#F360-Containers-revised-walls"
+%
+update_object(Identifier, Time) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'updateObject', [Identifier, Time], _).
+
+
+
+%% update_object_with_children(+Identifier)
+%
+% Updates object in the scene, including all items that are reachable via knowrob:properPhysicalPartTypes
+% or via knowrob:describedInMap
+%
+% @param Identifier eg. "http://knowrob.org/kb/ias_semantic_map.owl#F360-Containers-revised-walls"
+%
+update_object_with_children(Identifier) :-
+    get_timepoint(Time),
+    update_object_with_children(Identifier, Time).
+
+
+%% update_object_with_children(+Identifier, +Time)
+%
+% Updates object in the scene, including all items that are reachable via knowrob:properPhysicalPartTypes
+% or via knowrob:describedInMap, with their positions at time 'Time'
+%
+% @param Identifier eg. "http://knowrob.org/kb/ias_semantic_map.owl#F360-Containers-revised-walls"
+%
+update_object_with_children(Identifier, Time) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'updateObjectWithChildren', [Identifier, Time], _).
+    
+
 %% remove_object(+Identifier) is det.
 %
 % Remove object from the scene
@@ -200,6 +405,43 @@ remove_object_with_children(Identifier) :-
     visualisation_canvas(Canvas),
     jpl_call(Canvas, 'removeObjectWithChildren', [Identifier], _).
 
+%% add_text(+Identifier, +Text, +Position) is nondet.
+%
+% Add view aligned text object to the scene
+%
+% @param Identifier Object identifier, eg. "http://knowrob.org/kb/ias_semantic_map.owl#F360-Containers-revised-walls"
+% @param Text The text that should be displayed
+% @param Position The position of the text object.
+%
+add_text(Identifier, Text, Position) :-
+    visualisation_canvas(Canvas),
+    lists_to_arrays(Position, PositionArr),
+    jpl_call(Canvas, 'addText', [Identifier, Text, PositionArr], _).
+
+%% add_text(+Text) is nondet.
+%
+% Add HUD text ontop of canvas
+%
+% @param Text The text that should be displayed
+%
+add_text(Text) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'addHUDText', [_Identifier, Text], _).
+    
+%%
+%   Reads all trajectories described by start- and endtimes from logged tf data 
+%   and visualizes the average of those trajectories in the Web-based canvas.
+%   Note that start and endtimes should be lists of the same length
+add_avg_trajectory(Link, Starttimes, Endtimes, IntervalParts, Markertype) :-
+  visualisation_canvas(Canvas),
+  
+  ((rdf_has(Link, 'http://knowrob.org/kb/srdl2-comp.owl#urdfName', literal(Tf)),
+      atomic_list_concat(['/', Tf], TfLink)) ;
+      (TfLink = Link)),!,
+
+  jpl_list_to_array(Starttimes, ArrStart),
+  jpl_list_to_array(Endtimes, ArrEnd),
+  jpl_call(Canvas, 'showAverageTrajectory', [TfLink, ArrStart, ArrEnd, IntervalParts, Markertype], _).
 
 %% add_trajectory(+Link, +Starttime, +Endtime) is det.
 %% add_trajectory(+Link, +Starttime, +Endtime, +Interval) is det.
@@ -244,41 +486,18 @@ remove_trajectory(Link) :-
      
     jpl_call(Canvas, 'removeTrajectory', [TfLink], _).
 
+trajectory_length(Link, Starttime, Endtime, Length) :-
+    visualisation_canvas(Canvas),
+    
+    ((rdf_has(Link, 'http://knowrob.org/kb/srdl2-comp.owl#urdfName', literal(Tf)),
+      atomic_list_concat(['/', Tf], TfLink)) ;
+     (TfLink = Link)),!,
+     
+    jpl_call(Canvas, 'getTrajectoryLength', [TfLink, Starttime, Endtime, 5.0], Length).
 
-
-% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
-%
-% Human pose
-%
-
-%% add_human_pose(+Human, +Timepoint) is det.
-%
-% Reads joint poses of a human from logged tf data and visualizes them in the
-% Web-based canvas using a stick-man model.
-%
-% @param Human  The human individual that defines the skeletal structure
-% @param Timepoint  Time stamp identifier of the pose
-%
-add_human_pose(Human, Timepoint) :-
+clear_trajectories :-
     visualisation_canvas(Canvas),
-    jpl_call(Canvas, 'addHumanPose', [Human,Timepoint,0,''], _).
-add_human_pose(Human, Id, Timepoint) :-
-    visualisation_canvas(Canvas),
-    jpl_call(Canvas, 'addHumanPose', [Human,Timepoint,Id,''], _).
-add_human_pose(Human, Id, Timepoint, Prefix) :-
-    visualisation_canvas(Canvas),
-    jpl_call(Canvas, 'addHumanPose', [Human,Timepoint,Id,Prefix], _).
-
-%% remove_human_pose() is det.
-%
-% Removes human pose visualizations from the visualization canvas.
-%
-remove_human_pose :-
-    visualisation_canvas(Canvas),
-    jpl_call(Canvas, 'removeHumanPose', [0], _).
-remove_human_pose(Id) :-
-    visualisation_canvas(Canvas),
-    jpl_call(Canvas, 'removeHumanPose', [Id], _).
+    jpl_call(Canvas, 'clearTrajectories', [], _).
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 %
@@ -286,9 +505,9 @@ remove_human_pose(Id) :-
 %
 
 %% highlight_object(+Identifier) is det.
-%% highlight_object(Identifier, Highlight) is det.
-%% highlight_object(Identifier, Highlight, Color) is det.
-%% highlight_object(Identifier, Highlight, R, B, G, Alpha) is det.
+%% highlight_object(Identifier) is det.
+%% highlight_object(Identifier, Color) is det.
+%% highlight_object(Identifier, R, B, G, Alpha) is det.
 %% highlight_trajectory(+Link, +Starttime, +Endtime, +Color) is det.
 %% remove_highlight(+Identifier) is det.
 %
@@ -307,7 +526,6 @@ remove_human_pose(Id) :-
 % @param G          Green color value
 % @param Prob       Object existence probability
 %
-
 highlight_object(Identifier) :-
     visualisation_canvas(Canvas),
     jpl_call(Canvas, 'highlight', [Identifier], _).
@@ -316,9 +534,9 @@ highlight_object(Identifier, Color) :-
     visualisation_canvas(Canvas),
     jpl_call(Canvas, 'highlight', [Identifier, Color], _).
 
-highlight_object(Identifier, R, B, G, Prob) :-
+highlight_object(Identifier, R, B, G, Alpha) :-
     visualisation_canvas(Canvas),
-    jpl_call(Canvas, 'highlight', [Identifier, R, B, G, Prob], _).
+    jpl_call(Canvas, 'highlight', [Identifier, R, B, G, Alpha], _).
 
 highlight_trajectory(Link, Starttime, Endtime, Color) :-
     visualisation_canvas(Canvas),
@@ -331,10 +549,18 @@ highlight_trajectory(Link, Starttime, Endtime, Color) :-
      
     jpl_array_to_list(MarkersJ, Markers),
     
-    member(Marker, Markers),
-  
-    highlight_object(Marker, Color).
+    foreach(member(Marker, Markers), highlight_object(Marker, Color)).
 
+    
+%%%%Tmporray merge into rest...
+highlight_object_mesh(Identifier) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'highlightMesh', [Identifier], _).
+    
+remove_mesh_highlight(Identifier) :-
+    visualisation_canvas(Canvas),
+    jpl_call(Canvas, 'removeMeshHighlight', [Identifier], _).
+    
 remove_highlight(Identifier) :-
     visualisation_canvas(Canvas),
     jpl_call(Canvas, 'removeHighlight', [Identifier], _).
@@ -368,7 +594,7 @@ remove_highlight_with_children(Identifier) :-
 
 
 
-%% reset_highlighting is det.
+%% reset_highlight is det.
 %
 % Reset all highlighted objects in the canvas.
 %
@@ -439,7 +665,7 @@ add_diagram(Id, Title, Type, Xlabel, Ylabel, Width, Height, Fontsize, ValueList)
 % @param ValueList  List of data ranges, each of the form [[a,b],['1','2']]
 %
 add_piechart(Id, Title, ValueList) :-
-    add_diagram(Id, Title, 'piechart', '', '', 300, 300, '12px', ValueList).
+    add_diagram(Id, Title, 'piechart', '', '', 250, 250, '9px', ValueList).
 
 
 %% add_barchart(+Id, +Title, +ValueList) is nondet.
@@ -451,7 +677,7 @@ add_piechart(Id, Title, ValueList) :-
 % @param ValueList  List of data ranges, each of the form [[a,b],['1','2']]
 %
 add_barchart(Id, Title, ValueList) :-
-    add_diagram(Id, Title, 'barchart', '', '', 300, 300, '12px', ValueList).
+    add_diagram(Id, Title, 'barchart', '', '', 250, 250, '9px', ValueList).
 
     
 %% remove_diagram(+Id) is det.

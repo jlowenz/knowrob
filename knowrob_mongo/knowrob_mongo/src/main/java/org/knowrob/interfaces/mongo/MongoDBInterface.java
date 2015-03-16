@@ -33,9 +33,6 @@ import com.mongodb.QueryBuilder;
 
 public class MongoDBInterface {
 
-	MongoClient mongoClient;
-	DB db;
-
 	TFMemory mem;
 
 	final SimpleDateFormat mongoDateFormat;
@@ -67,14 +64,16 @@ public class MongoDBInterface {
         	port = Integer.valueOf(env.get("MONGO_PORT_27017_TCP_PORT"));
         }
         
-		try {
-			mongoClient = new MongoClient(host, port);
-			db = mongoClient.getDB("roslog");
-
-		} catch (UnknownHostException e) {
-			e.printStackTrace();
-		}
 		mem = TFMemory.getInstance();
+	}
+	
+	public DB getDatabase() {
+		return mem.getDatabase();
+	}
+	
+	public DB setDatabase(String name) {
+		mem.setDatabase(name);
+		return getDatabase();
 	}
 
 
@@ -114,8 +113,8 @@ public class MongoDBInterface {
 	 * @return Instance of a Designator
 	 */
 	public Designator getDesignatorByID(String designator) {
-		
-		DBCollection coll = db.getCollection("logged_designators");
+	
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		DBObject query = QueryBuilder
 				.start("designator._id").is(designator).get();
 
@@ -128,8 +127,10 @@ public class MongoDBInterface {
 		while(cursor.hasNext()) {
 			DBObject row = cursor.next();
 			Designator desig = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
+			if(cursor.hasNext()) cursor.close();
 			return desig;
 		}
+		
 		cursor.close();
 		
 		return null;
@@ -148,7 +149,7 @@ public class MongoDBInterface {
 	 */
 	public Designator[] getDesignatorsByPattern(String[] keys, String[] values) {
 		
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		
 		QueryBuilder qb = QueryBuilder.start("designator").exists("_id");
 		for(int i=0; i<keys.length; i++) {
@@ -186,7 +187,7 @@ public class MongoDBInterface {
 	public Designator latestUIMAPerceptionBefore(int posix_ts) {
 
 		Designator desig = null;
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 
 		// read all events up to one minute before the time
 		Date start = new ISODate((long) 1000 * (posix_ts - 60) ).getDate();
@@ -215,6 +216,80 @@ public class MongoDBInterface {
 		}
 		return desig;
 	}
+	
+	public Designator getLatestDesignatorBefore(long posix_ts) {
+		return getLatestDesignatorBefore((double)posix_ts, null, null, null);
+	}
+	
+	public Designator getLatestDesignatorBefore(double posix_ts) {
+		return getLatestDesignatorBefore(posix_ts, null, null, null);
+	}
+	
+	public Designator getLatestDesignatorBefore(long posix_ts, String[] keys, String[] relations, Object[] values) {
+		return getLatestDesignatorBefore((double)posix_ts, keys, relations, values);
+	}
+	
+	public Designator getLatestDesignatorBefore(double posix_ts, String[] keys, String[] relations, Object[] values) {
+		Designator desig = null;
+		DBCollection coll = getDatabase().getCollection("logged_designators");
+
+		// read all events up to one minute before the time
+		Object t = new ISODate((long) (1000.0 * posix_ts) ).getDate();
+
+		QueryBuilder query = QueryBuilder.start("__recorded").lessThan( t );
+		
+		if(relations!=null&&keys!=null&&values!=null) {
+			for(int i=0; i<relations.length && i<keys.length && i<values.length; ++i) {
+				String rel = relations[i];
+				String key = keys[i];
+				Object val = values[i];
+				
+				if("==".equals(rel) || "=".equals(rel) || "is".equals(rel))
+					query = query.and(key).is(val);
+				else if("!=".equals(rel))
+					query = query.and(key).notEquals(val);
+				else if("<".equals(rel))
+					query = query.and(key).lessThan(val);
+				else if("<=".equals(rel))
+					query = query.and(key).lessThanEquals(val);
+				else if(">".equals(rel))
+					query = query.and(key).greaterThan(val);
+				else if(">=".equals(rel))
+					query = query.and(key).greaterThanEquals(val);
+				else {
+					System.err.println("Unknown mongo relation: " + rel);
+				}
+			}
+		}
+		
+		DBObject queryInstance = null;
+		try {
+			queryInstance = query.get();
+		}
+		catch(Exception e){
+			e.printStackTrace();
+			return null;
+		}
+		
+		DBObject cols  = new BasicDBObject();
+		cols.put("designator", 1 );
+
+		DBCursor cursor = coll.find(queryInstance, cols);
+		cursor.sort(new BasicDBObject("__recorded", -1));
+		try {
+			if(cursor.hasNext()) {
+				desig = new Designator().readFromDBObject(
+					(BasicDBObject) cursor.next().get("designator"));
+			}
+		}
+		catch(Exception e){
+			e.printStackTrace();
+		}
+		finally {
+			cursor.close();
+		}
+		return desig;
+	}
 
 
 	/**
@@ -226,7 +301,7 @@ public class MongoDBInterface {
 	public List<Date> getUIMAPerceptionTimes(String object) {
 
 		List<Date> times = new ArrayList<Date>();
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 
 		// TODO: This will always return a single result since the ID is unique
 		DBObject query = QueryBuilder
@@ -253,12 +328,29 @@ public class MongoDBInterface {
 		}
 		return times;
 	}
+	
+	public Object[] getDistinctDesignatorValues(String key) {
+		DBCollection coll = getDatabase().getCollection("logged_designators");
+		
+		List<?> l = coll.distinct(key);
+		Object[] out = new Object[l.size()];
+		int index = 0;
+		for(Object v : l) {
+			out[index] = v;
+			index += 1;
+		}
+		
+		return out;
+	}
 
 
 	@SuppressWarnings("unchecked")
 	public Matrix4d getDesignatorLocation(String id) {
-		Matrix4d poseMatrix = null;
-		DBCollection coll = db.getCollection("logged_designators");
+		// FIXME: bad assumption
+		final String targetFrame = "/map";
+		
+		Stamped<Matrix4d> poseMatrix = null;
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		DBObject query = QueryBuilder
 				.start("designator._id").is(id).get();
 
@@ -267,15 +359,40 @@ public class MongoDBInterface {
 		cols.put("designator", 1 );
 
 		DBCursor cursor = coll.find(query, cols);
-		cursor.sort(new BasicDBObject("__recorded", -1));
 		try {
+			cursor.sort(new BasicDBObject("__recorded", -1));
+			
 			while(cursor.hasNext()) {
 
 				DBObject row = cursor.next();
-				Designator res = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
-				Designator res2 = (Designator)res.get("AT");
-				poseMatrix = ((Stamped<Matrix4d>)res2.get("POSE")).getData();
-				break;
+				Object mat = null;
+				
+				Designator d = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
+				Designator loc = (Designator)d.get("AT");
+				if(loc != null) {
+					mat = loc.get("POSE");
+				}
+				if(mat == null) {
+					mat = d.get("POSE");
+				}
+				
+				if(mat!=null) {
+					poseMatrix = (Stamped<Matrix4d>)mat;
+					if(!poseMatrix.frameID.startsWith("/"))
+						poseMatrix.frameID = "/"+poseMatrix.frameID;
+					
+					// Transform pose to target frame if required
+					if(poseMatrix.frameID!=null && !targetFrame.equals(poseMatrix.frameID)) {
+						final Stamped<Matrix4d> worldFrame = new Stamped<Matrix4d>();
+						worldFrame.setData(new Matrix4d());
+						worldFrame.getData().setIdentity();
+						
+						if(transformPose(targetFrame, poseMatrix, worldFrame))
+							poseMatrix = worldFrame;
+					}
+					
+					break;
+				}
 
 			}
 		} catch(Exception e){
@@ -283,7 +400,10 @@ public class MongoDBInterface {
 		} finally {
 			cursor.close();
 		}
-		return poseMatrix;
+		if(poseMatrix == null)
+			return null;
+		else
+			return poseMatrix.getData();
 	}
 
 	/**
