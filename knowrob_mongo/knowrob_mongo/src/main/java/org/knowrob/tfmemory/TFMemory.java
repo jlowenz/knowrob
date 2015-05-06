@@ -147,7 +147,16 @@ public class TFMemory {
 		frames = new HashMap<String, Frame>();
 
 	}
-
+	
+	public DB getDatabase() {
+		return db;
+	}
+	
+	public DB setDatabase(String name) {
+		db = mongoClient.getDB(name);
+		frames = new HashMap<String, Frame>();
+		return db;
+	}
 
 	/* **********************************************************************
 	 * *                            TF LISTENER                             *
@@ -459,7 +468,7 @@ public class TFMemory {
 	 */
 	protected boolean lookupLists(Frame targetFrame, Frame sourceFrame, long time,
 			LinkedList<TransformStorage> inverseTransforms, LinkedList<TransformStorage> forwardTransforms) {
-
+		
 		// wrap the source and target frames in search nodes
 		SearchNode<Frame> sourceNode = new SearchNode<Frame>(sourceFrame);
 		SearchNode<Frame> targetNode = new SearchNode<Frame>(targetFrame);

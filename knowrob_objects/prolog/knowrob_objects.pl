@@ -25,7 +25,17 @@
       storagePlaceForBecause/3,
       current_object_pose/2,
       object_pose_at_time/3,
+      object_pose_at_time/4,
+      object_pose/3,
+      object_color/2,
+      object_dimensions/4,
+      object_assert_dimensions/4,
+      object_assert_color/2,
+      matrix_rotation/2,
+      matrix_translation/2,
       rotmat_to_list/2,
+      position_to_list/2,
+      quaternion_to_list/2,
       create_joint_information/9,
       update_joint_information/7,
       read_joint_information/9,
@@ -94,6 +104,14 @@
     storagePlaceForBecause(r,r,r),
     current_object_pose(r,-),
     current_object_pose(r,r,-),
+    object_pose_at_time(r,r,?),
+    object_pose(+,-,-),
+    object_color(r, ?),
+    object_dimensions(r, ?, ?, ?),
+    object_assert_dimensions(r, +, +, +),
+    object_assert_color(r, +),
+    matrix_rotation(+,-),
+    matrix_translation(+,-),
     rotmat_to_list(r,-),
     comp_orientation(r, r),
     instantiate_at_position(r,+,r),
@@ -118,11 +136,38 @@
 :- rdf_db:rdf_register_ns(owl, 'http://www.w3.org/2002/07/owl#', [keep(true)]).
 :- rdf_db:rdf_register_ns(knowrob, 'http://knowrob.org/kb/knowrob.owl#', [keep(true)]).
 :- rdf_db:rdf_register_ns(xsd, 'http://www.w3.org/2001/XMLSchema#', [keep(true)]).
+:- rdf_db:rdf_register_ns(srdl2comp, 'http://knowrob.org/kb/srdl2-comp.owl#', [keep(true)]).
 
 
-
+%% storagePlaceFor(St, ObjT) is nondet.
+%
+% Computes the nominal storage location of an object based on assertions for
+% typePrimaryFunction-StoragePlaceFor for any of its superclasses. For example,
+% a Refrigerator is asserted as ...-StoragePlaceFor perishable items, so
+% instances of Refrigerator will therefore be returned for e.g. dairy products
+% or meat products.
+%
+% @param St       Instance of a knowrob:'StorageConstruct'
+% @param Obj      Object class or instance
+% 
 storagePlaceFor(St, ObjT) :-
   storagePlaceForBecause(St, ObjT, _).
+
+%% storagePlaceForBecause(St, ObjType, ObjT) is nondet.
+%
+% Computes the nominal storage location of an object based on assertions for
+% typePrimaryFunction-StoragePlaceFor for any of its superclasses. For example,
+% a Refrigerator is asserted as ...-StoragePlaceFor perishable items, so
+% instances of Refrigerator will therefore be returned for e.g. dairy products
+% or meat products.
+%
+% In addition to the storage place, this predicate further returns the superclass
+% of Obj for which this information is asserted (e.g. Perishable)
+%
+% @param St       Instance of a knowrob:'StorageConstruct'
+% @param Obj      Object class or instance
+% @param ObjType  Class for which information about the storage place has been asserted
+%
 
 % two instances
 storagePlaceForBecause(St, Obj, ObjT) :-
@@ -138,22 +183,51 @@ storagePlaceForBecause(St, ObjType, ObjT) :-
   owl_individual_of(St, StT),
   owl_subclass_of(ObjType, ObjT).
 
-
-
-%% current_object_pose(+ObjInstance, -PoseList) is det.
+%% current_object_pose(+ObjInstance, -PoseList) is nondet.
 %
 % Get the pose of an object based on the latest perception
 %
+% @param Obj       Instance of a subclass of SpatialThing-Localized
+% @param PoseList  Row-based representation of the object's 4x4 pose matrix as list[16]
+% 
 current_object_pose(Obj, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
   rdf_triple('http://knowrob.org/kb/knowrob.owl#orientation',Obj,Pose),!,
   rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]).
 
+% Quaternion and position
+object_pose(Pose, [X,Y,Z], [QW,QX,QY,QZ]) :-
+  position_to_list(Pose, [X,Y,Z]),
+  quaternion_to_list(Pose, [QW,QX,QY,QZ]).
 
-%% object_pose_at_time(+ObjInstance, +Time, -PoseList) is det.
+% TransformationMatrix
+object_pose(Pose, [X,Y,Z], [QW,QX,QY,QZ]) :-
+  rotmat_to_list(Pose, Matrix),
+  matrix_rotation(Matrix, [QW,QX,QY,QZ]),
+  matrix_translation(Matrix, [X,Y,Z]).
+
+%% object_pose_at_time(+ObjInstance, +Time, -Position, -Quaternion) is nondet.
 %
 % Get the pose of an object based on the latest perception before Time
 %
+% @param Obj         Instance of a subclass of SpatialThing-Localized
+% @param Time        Instance of a TimePoint
+% @param Position    list[3] that represents the position of the object
+% @param Quaternion  list[4] that represents the rotation of the object
+% 
+object_pose_at_time(Obj, Time, [X,Y,Z], [QW,QX,QY,QZ]) :-
+  object_detection(Obj, Time, Detection),
+  rdf_triple(knowrob:eventOccursAt, Detection, Pose),!,
+  object_pose(Pose, [X,Y,Z], [QW,QX,QY,QZ]).
+
+%% object_pose_at_time(+ObjInstance, +Time, -PoseList) is nondet.
+%
+% Get the pose of an object based on the latest perception before Time
+%
+% @param Obj       Instance of a subclass of SpatialThing-Localized
+% @param Time      Instance of a TimePoint
+% @param PoseList  Row-based representation of the object's 4x4 pose matrix as list[16]
+% 
 object_pose_at_time(Obj, Time, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
   object_detection(Obj, Time, Detection),
@@ -161,11 +235,50 @@ object_pose_at_time(Obj, Time, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21
   
   rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]).
 
+parse_vector(In, Out) :-
+  jpl_call('org.knowrob.utils.MathUtil', 'parseVector', [In, ' '], OutArr),
+  not(OutArr = @(null)),
+  jpl_array_to_list(OutArr, Out).
 
-%% rotmat_to_list(+RotMatInstance, -PoseList) is det.
+%% position_to_list(+Pose, -PositionList) is nondet.
+%
+% Read the translation values for an instance of a transformation
+%
+% @param Pose          Instance of a subclass of Transformation
+% @param PositionList  list[3] that represents translation of an object
+% 
+position_to_list(Pose, [X,Y,Z]) :-
+  rdf_triple('http://knowrob.org/kb/knowrob.owl#translation', Pose, literal(type(_,Translation))),
+  parse_vector(Translation, [X,Y,Z]).
+
+%% quaternion_to_list(+Pose, -QuaternionList) is nondet.
+%
+% Read the rotation values for an instance of a transformation
+%
+% @param Pose          Instance of a subclass of Transformation
+% @param PositionList  list[4] that represents rotation of an object. First list element is the w component of the quaternion.
+% 
+quaternion_to_list(Pose, [QW,QX,QY,QZ]) :-
+  rdf_triple('http://knowrob.org/kb/knowrob.owl#quaternion', Pose, literal(type(_,Quaternion))),
+  parse_vector(Quaternion, [QW,QX,QY,QZ]).
+
+matrix_rotation(Matrix, [QW,QX,QY,QZ]) :-
+  jpl_list_to_array(Matrix, MatrixArr),
+  jpl_call('org.knowrob.utils.MathUtil', 'matrixToQuaternion', [MatrixArr], QuaternionArr),
+  jpl_array_to_list(QuaternionArr, [QW,QX,QY,QZ]).
+
+matrix_translation(Matrix, [X,Y,Z]) :-
+  nth0( 3, Matrix, X),
+  nth0( 7, Matrix, Y),
+  nth0(11, Matrix, Z).
+
+%% rotmat_to_list(+RotMatInstance, -PoseList) is nondet.
 %
 % Read the pose values for an instance of a rotation matrix
 %
+% @param Obj       Instance of a subclass of SpatialThing-Localized
+% @param PoseList  Row-based representation of the object's 4x4 pose matrix as list[16]
+% 
 rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23, M30, M31, M32, M33]) :-
 
     rdf_triple('http://knowrob.org/kb/knowrob.owl#m00',Pose,M00literal), strip_literal_type(M00literal, M00a), term_to_atom(M00, M00a),
@@ -188,12 +301,65 @@ rotmat_to_list(Pose, [M00, M01, M02, M03, M10, M11, M12, M13, M20, M21, M22, M23
     rdf_triple('http://knowrob.org/kb/knowrob.owl#m32',Pose,M32literal), strip_literal_type(M32literal, M32a), term_to_atom(M32, M32a),
     rdf_triple('http://knowrob.org/kb/knowrob.owl#m33',Pose,M33literal), strip_literal_type(M33literal, M33a), term_to_atom(M33, M33a),!.
 
+%% object_dimensions(?Obj, ?Depth, ?Width, ?Height) is nondet.
+%
+% Get the width, depth and height of the object.
+%
+% @param Obj    Instance of a subclass of EnduringThing-Localized
+% @param Depth  Depth of the bounding box (x-dimension)
+% @param Width  Width of the bounding box (y-dimension)
+% @param Height Height of the bounding box (z-dimension)
+% 
+object_dimensions(Obj, Depth, Width, Height) :-
+  rdf_has(Obj, knowrob:depthOfObject,  literal(type(_, Depth))),
+  rdf_has(Obj, knowrob:widthOfObject,  literal(type(_, Width))),
+  rdf_has(Obj, knowrob:heightOfObject, literal(type(_, Height))).
 
+object_dimensions(Obj, Depth, Width, Height) :-
+  rdf_has(Obj, srdl2comp:'box_size', literal(type(_, ScaleVector))),
+  parse_vector(ScaleVector, [Depth, Width, Height]).
 
+%% object_assert_dimensions(+Obj, +H, +W, +D) is nondet.
+%
+% Assert object dimension properties.
+%
+% @param Obj    Instance of a subclass of EnduringThing-Localized
+% @param Depth  Depth of the bounding box (x-dimension)
+% @param Width  Width of the bounding box (y-dimension)
+% @param Height Height of the bounding box (z-dimension)
+% 
+object_assert_dimensions(Obj, H, W, D) :-
+    rdf_assert(Obj,knowrob:'depthOfObject',literal(type(xsd:float, D))),
+    rdf_assert(Obj,knowrob:'widthOfObject',literal(type(xsd:float, W))),
+    rdf_assert(Obj,knowrob:'heightOfObject',literal(type(xsd:float, H))).
 
+%% object_color(?Obj, ?Col) is nondet.
+%
+% Get the main color of the object.
+%
+% @param Obj  Instance of a subclass of EnduringThing-Localized
+% @param Col  Main color of the object
+% 
+object_color(Obj, Col) :-
+  rdf_has(Obj, knowrob:mainColorOfObject, literal(type(_, Col))).
 
+%% object_color(?Obj, ?Col) is nondet.
+%
+% Assert object main color property.
+%
+% @param Obj  Instance of a subclass of EnduringThing-Localized
+% @param Col  Main color of the object
+% 
+object_assert_color(ObjInstance, [R,G,B]) :-
+  object_assert_color(ObjInstance, [R,G,B,1.0]).
 
-
+object_assert_color(ObjInstance, [R,G,B,A]) :-
+  atomic_list_concat([R,G,B,A], ' ', ColRGBA),
+  object_assert_color(ObjInstance, ColRGBA).
+    
+object_assert_color(ObjInstance, Col) :-
+   atom(Col),
+   rdf_assert(ObjInstance, knowrob:'mainColorOfObject',literal(type(xsd:string, Col))).
 
 %% instantiate_at_position(+ObjClassDef, +PoseList, -ObjInst) is det.
 %

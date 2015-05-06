@@ -27,42 +27,43 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package org.knowrob.json_prolog;
+package org.knowrob.json_prolog.solutions;
 
 import java.util.Hashtable;
 
+import org.knowrob.json_prolog.query.ThreadedQuery;
+
 import jpl.Term;
 
-public final class PrologAllSolutions implements PrologSolutions {
+public class PrologIncrementalSolutions implements PrologSolutions {
+  private ThreadedQuery query;
 
-  private int currentIndex = 0;
-  Hashtable<String, jpl.Term>[] solutions;
+  public PrologIncrementalSolutions(ThreadedQuery query) {
+    this.query = query;
+  }
   
-  @SuppressWarnings("unchecked")
-  PrologAllSolutions(jpl.Query query) {
-    solutions = (Hashtable<String, jpl.Term>[])query.allSolutions();
+  public ThreadedQuery getQuery() {
+    return query;
   }
   
   @Override
-  public void close() {
-    // This method doesn't need to do anything here. We already closed the query. 
-  }  
-  
-  @Override
-  public void reset() {
-    currentIndex = 0;
+  public void close() throws Exception {
+    query.close();
   }
 
   @Override
-  public Hashtable<String, Term> nextSolution() {
-    Hashtable<String, jpl.Term> result = solutions[currentIndex];
-    currentIndex++;
-    return result;
+  public Hashtable<String, Term> nextSolution() throws Exception {
+    return query.nextSolution();
   }
 
   @Override
-  public boolean hasMoreSolutions() {
-    return currentIndex < solutions.length;
+  public void reset() throws Exception {
+    query.reset();
+  }
+
+  @Override
+  public boolean hasMoreSolutions() throws Exception {
+    return query.hasMoreSolutions();
   }
 
 }

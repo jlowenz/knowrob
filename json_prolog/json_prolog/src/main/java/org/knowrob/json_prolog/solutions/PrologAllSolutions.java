@@ -27,13 +27,44 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package org.knowrob.json_prolog;
+package org.knowrob.json_prolog.solutions;
 
 import java.util.Hashtable;
 
-public interface PrologSolutions {
-  boolean hasMoreSolutions();
-  Hashtable<String, jpl.Term> nextSolution();
-  void close();
-  void reset();
+import org.knowrob.json_prolog.query.ThreadedQuery;
+
+import jpl.Term;
+
+public final class PrologAllSolutions implements PrologSolutions {
+
+  private int currentIndex = 0;
+  Hashtable<String, jpl.Term>[] solutions;
+  
+  public PrologAllSolutions(ThreadedQuery query) throws Exception {
+    solutions = query.allSolutions();
+    query.close();
+  }
+  
+  @Override
+  public void close() throws Exception {
+    // This method doesn't need to do anything here. We already closed the query. 
+  }  
+  
+  @Override
+  public void reset() throws Exception {
+    currentIndex = 0;
+  }
+
+  @Override
+  public Hashtable<String, Term> nextSolution() throws Exception {
+    Hashtable<String, jpl.Term> result = solutions[currentIndex];
+    currentIndex++;
+    return result;
+  }
+
+  @Override
+  public boolean hasMoreSolutions() throws Exception {
+    return currentIndex < solutions.length;
+  }
+
 }

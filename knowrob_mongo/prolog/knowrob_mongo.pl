@@ -17,20 +17,34 @@
 
 :- module(knowrob_mongo,
     [
+      mng_db/1,
+      
       mng_latest_designator_before_time/3,
+      mng_latest_designator/3,
+      mng_latest_designator_with_values/5,
       mng_designator_type/2,
       mng_designator_props/3,
+      mng_designator_props/4,
       mng_desig_matches/2,
       mng_obj_pose_by_desig/2,
+      mng_designator/2,
+      mng_designator/3,
+      mng_designator_distinct_values/2,
+      mng_designator_location/2,
+      mng_designator_location/3,
+      mng_decision_tree/1,
 
       mng_lookup_transform/4,
+      mng_lookup_position/4,
       mng_transform_pose/5,
 
       mng_timestamp/2,
 
       mng_robot_pose/2,
+      mng_robot_pose/3,
       mng_robot_pose_at_time/4,
       mng_comp_pose/2,
+      mng_comp_pose/3,
       mng_comp_pose_at_time/4,
 
       obj_blocked_by_in_camera/4,
@@ -49,12 +63,25 @@
 
 
 :-  rdf_meta
+    mng_db(+),
     mng_lookup_transform(+,+,r,-),
+    mng_lookup_position(+,+,r,-),
+    
     mng_latest_designator_before_time(r,-,-),
+    mng_latest_designator(r,+,-),
+    mng_latest_designator_with_values(r,+,+,+,-),
+    mng_designator(r,?),
+    mng_designator(r,+,?),
+    mng_designator_distinct_values(+,-),
+    mng_designator_location(r,?),
+    
+    mng_decision_tree(-),
 
     mng_robot_pose(r, r),
+    mng_robot_pose(r, r,r),
     mng_robot_pose_at_time(r, +, r, r),
     mng_comp_pose(r, r),
+    mng_comp_pose(r, r,r),
     mng_comp_pose_at_time(r, +, r, r),
 
     mng_timestamp(r, r),
@@ -62,6 +89,7 @@
     mng_desig_matches(r, +),
     mng_obj_pose_by_desig(r,r),
     mng_designator_props(r,?),
+    mng_designator_props(r,+,+,?),
     mng_designator_type(r,?),
 
     obj_blocked_by_in_camera(r, r, r, r),
@@ -88,6 +116,16 @@ mongo_interface(DB) :-
 mongo_interface(DB) :-
     mng_interface(DB).
 
+%% mng_db(+DBName) is nondet.
+%
+% Change mongo database used for future queries
+%
+% @param DBName  The name of the db (e.g., 'roslog')
+%
+mng_db(DBName) :-
+    mongo_interface(Mongo),
+    jpl_call(Mongo, setDatabase, [DBName], _).
+
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 % Designator integration
@@ -95,19 +133,18 @@ mongo_interface(DB) :-
 
 %% mng_latest_designator_before_time(+TimePoint, -Type, -Pose) is nondet.
 %
+% Read the pose of the latest designator of type 'Type' before 'TimePoint'
+%
 % @param TimePoint  Instance of knowrob:TimePoint
 % @param Type       'Type' property of the designator
 % @param PoseList   Object pose from designator as list[16]
 %
 mng_latest_designator_before_time(TimePoint, Type, PoseList) :-
-
-  rdf_split_url(_, TimePointLocal, TimePoint),
-  atom_concat('timepoint_', TimeAtom, TimePointLocal),
-  term_to_atom(Time, TimeAtom),
-
+  time_term(TimePoint, Time),
   mongo_interface(DB),
   jpl_call(DB, 'latestUIMAPerceptionBefore', [Time], Designator),
   jpl_call(Designator, 'get', ['_designator_type'], Type),
+  % TODO(daniel): Is this used at all?
   jpl_call(Designator, 'get', ['POSE-ON-PLANE'], StampedPoseString),
   jpl_call('com.mongodb.util.JSON', parse, [StampedPoseString], StampedPoseParsed), 
   jpl_new('org.knowrob.interfaces.mongo.types.PoseStamped', [], StampedPose), 
@@ -115,15 +152,135 @@ mng_latest_designator_before_time(TimePoint, Type, PoseList) :-
   jpl_call(StampedPose, 'getMatrix4d', [], PoseMatrix4d),  
   knowrob_coordinates:matrix4d_to_list(PoseMatrix4d, PoseList).
 
+%% mng_latest_designator(+TimePoint, +MongoPattern, -DesigJava) is nondet.
+%
+% Read the latest designator that matches given pattern
+%
+% @param TimePoint    Instance of knowrob:TimePoint
+% @param MongoPattern Nested list of command,field,value triples.
+% @param DesigJava    The latest JAVA designator object
+%
+mng_latest_designator(Timepoint, X, DesigJava) :-
+  atom(Timepoint),
+  time_term(Timepoint, Time),
+  mng_latest_designator(Time, X, DesigJava).
 
-% Computable: determine object pose based on designator
+mng_latest_designator(Time, [], DesigJava) :-
+  number(Time),
+  mongo_interface(DB),
+  jpl_call(DB, 'getLatestDesignatorBefore', [Time], DesigJava),
+  not(DesigJava = @(null)).
+
+mng_latest_designator(Time, MongoPattern, DesigJava) :-
+  number(Time),
+  mongo_interface(DB),
+  
+  findall(Key, member([Key,_,_],MongoPattern), Keys),
+  findall(Rel, member([_,Rel,_],MongoPattern), Relations),
+  findall(Obj, (
+      member([_,_,Val], MongoPattern),
+      once(mng_value_object(Val, Obj))
+  ), Values),
+  
+  jpl_list_to_array(Keys, KeysArray),
+  jpl_list_to_array(Relations, RelationsArray),
+  jpl_list_to_array(Values, ValuesArray),
+  
+  jpl_call(DB, 'getLatestDesignatorBefore', [Time, KeysArray, RelationsArray, ValuesArray], DesigJava),
+  not(DesigJava = @(null)).
+
+mng_latest_designator_with_values(Timepoint, Keys, Relations, Values, DesigJava) :-
+  atom(Timepoint),
+  time_term(Timepoint, Time),
+  mongo_interface(DB),
+  jpl_list_to_array(Keys, KeysArray),
+  jpl_list_to_array(Relations, RelationsArray),
+  jpl_list_to_array(Values, ValuesArray),
+  jpl_call(DB, 'getLatestDesignatorBefore', [Time, KeysArray, RelationsArray, ValuesArray], DesigJava),
+  not(DesigJava = @(null)).
+
+mng_value_object(date(Val), Date) :-
+  Miliseconds is Val * 1000.0,
+  jpl_new('java.lang.Double', [Miliseconds], MilisecondsDouble), 
+  jpl_call(MilisecondsDouble, 'longValue', [], MilisecondsLong),
+  jpl_new('org.knowrob.interfaces.mongo.types.ISODate', [MilisecondsLong], ISODate),
+  jpl_call(ISODate, 'getDate', [], Date).
+
+mng_value_object(Val, ObjJava) :-
+  integer(Val),
+  jpl_new('java.lang.Long', [Val], ObjJava).
+
+mng_value_object(Val, ObjJava) :-
+  float(Val),
+  jpl_new('java.lang.Double', [Val], ObjJava).
+
+mng_value_object(Val, ObjJava) :-
+  atom(Val),
+  jpl_new('java.lang.String', [Val], ObjJava).
+
+%% mng_designator_distinct_values( +Key, -Values) is nondet.
+% 
+% Determine distinct field values of designators
+%
+% @param Key    The field key
+% @param Values List of distinct values
+% 
+mng_designator_distinct_values(Key, Values) :-
+  mongo_interface(DB),
+  jpl_call(DB, 'getDistinctDesignatorValues', [Key], ValuesArr),
+  jpl_array_to_list(ValuesArr, Values).
+
+%% mng_obj_pose_by_desig(+Obj, -Pose) is nondet.
+% 
+% Determine object pose based on the POSE property of a linked designator
+%
+% @param Obj   Object instance
+% @param Pose  Instance of a Perception
+% 
 mng_obj_pose_by_desig(Obj, Pose) :-
 
   % TODO: avoid multiple creation of pose instances
   rdf_has(Obj, knowrob:designator, Designator),
   mng_designator_props(Designator, 'POSE', Pose).
 
+%% mng_designator(+Designator, -DesigJava) is nondet.
+%% mng_designator(+Designator, +IDKey, -DesigJava) is nondet.
+% 
+% Read object that corresponds to Designator into
+% a JAVA object DesigJava.
+% 
+mng_designator(Designator, DesigJava) :-
+  mng_designator(Designator, 'designator._id', DesigJava).
 
+mng_designator(Designator, IDKey, DesigJava) :-
+  atom(Designator),
+  rdf_url_namespace(Designator, Ns), not( Ns = '' ),
+  rdf_split_url(_, DesigID, Designator),
+  mongo_interface(DB),
+  jpl_call(DB, 'getDesignatorByID', [DesigID, IDKey], DesigJava).
+
+mng_designator(Designator, IDKey, DesigJava) :-
+  number(Designator),
+  jpl_new('java.lang.Double', [Designator], NumberValue), 
+  mongo_interface(DB),
+  jpl_call(DB, 'getDesignatorByID', [NumberValue, IDKey], DesigJava).
+
+mng_designator(Designator, IDKey, DesigJava) :-
+  mongo_interface(DB),
+  jpl_call(DB, 'getDesignatorByID', [Designator, IDKey], DesigJava).
+
+mng_decision_tree(DesigJava) :-
+  mongo_interface(DB),
+  jpl_call(DB, 'getDecisionTree', [], DesigJava).
+
+
+%% mng_designator_type(+Designator, ?Type) is nondet.
+%
+% Read the type of a logged designator by its ID
+% 
+% @param Designator  Instance of a designator, having its ID as local part of the IRI
+% @param Type        Type of the designator
+% 
 mng_designator_type(Designator, Type) :-
 
   rdf_split_url(_, DesigID, Designator),
@@ -134,77 +291,192 @@ mng_designator_type(Designator, Type) :-
   jpl_call(DesigJava, 'getType', [], Type).
 
 
+%% mng_designator_props(+Designator, ?PropertyPath, ?Value) is nondet.
+%
+% Read the properties of a logged designator by its ID
+%
+% @param Designator   Instance of a designator, having its ID as local part of the IRI
+% @param PropertyPath Sequence of property keys for nested designators
+% @param Value        Value slot of the designator
+% 
 mng_designator_props(Designator, Prop, Value) :-
-
   rdf_split_url(_, DesigID, Designator),
-
   mongo_interface(DB),
   jpl_call(DB, 'getDesignatorByID', [DesigID], DesigJava),
+  
+  mng_designator_props(Designator, DesigJava, Prop, Value).
 
+%% mng_designator_props(+Designator, +DesigJava, +PropertyPath, ?Value) is nondet.
+% 
+% Read the properties of a logged designator.
+% 
+% @param Designator   Instance of a designator, having its ID as local part of the IRI
+% @param DesigJava    JAVA instance of the designator
+% @param PropertyPath Sequence of property keys for nested designators
+% @param Value        Value slot of the designator
+% 
+
+mng_designator_props(Designator, DesigJava, PropertyPath, Value) :-
+  atom(PropertyPath),
+  atomic_list_concat(PropertyPathList,'.',PropertyPath),
+  mng_designator_props(Designator, DesigJava, PropertyPathList, Value).
+
+mng_designator_props(Designator, DesigJava, [Prop|Tail], Value) :-
+  not( jpl_null(DesigJava) ),
   jpl_call(DesigJava, 'keySet', [], PropsSet),
   jpl_set_element(PropsSet, Prop),
+  jpl_call(DesigJava, 'get', [Prop], ChildDesigJava),
+  jpl_ref_to_type(ChildDesigJava,  class([org,knowrob,interfaces,mongo,types],['Designator'])),
+  mng_designator_props(Designator, ChildDesigJava, Tail, Value).
+  
+mng_designator_props(Designator, DesigJava, [Prop], Value) :-
+  mng_designator_props_value(Designator, DesigJava, Prop, Value).
+  
+mng_designator_props_value(Designator, DesigJava, Prop, Value) :-
+  not( jpl_null(DesigJava) ),
+  jpl_call(DesigJava, 'keySet', [], PropsSet),
+  jpl_set_element(PropsSet, Prop),
+  jpl_call(DesigJava, 'get', [Prop], ValIn),
+  once(mng_desig_get_value(Designator, DesigJava, ValIn, Value)).
 
-  once(mng_desig_get_value(Designator, DesigJava, Prop, Value)).
+%% mng_designator_location(+Designator, ?Matrix) is nondet.
+%
+% Check designator transformation matrix
+%
+% @param Designator  Instance of a designator, having its ID as local part of the IRI
+% @param Matrix      4x4 matrix that represents the designator transformation
+% 
+mng_designator_location(Designator, [X00, X01, X02, X03,
+                                     X10, X11, X12, X13,
+                                     X20, X21, X22, X23,
+                                     X30, X31, X32, X33]) :-
+
+  rdf_split_url(_, DesigID, Designator),
+  
+  mongo_interface(DB),
+  jpl_call(DB, 'getDesignatorLocation', [DesigID], Mat4d),
+  jpl_is_object(Mat4d),
+  
+  jpl_call(Mat4d, 'getElement', [0,0], X00),
+  jpl_call(Mat4d, 'getElement', [0,1], X01),
+  jpl_call(Mat4d, 'getElement', [0,2], X02),
+  jpl_call(Mat4d, 'getElement', [0,3], X03),
+  jpl_call(Mat4d, 'getElement', [1,0], X10),
+  jpl_call(Mat4d, 'getElement', [1,1], X11),
+  jpl_call(Mat4d, 'getElement', [1,2], X12),
+  jpl_call(Mat4d, 'getElement', [1,3], X13),
+  jpl_call(Mat4d, 'getElement', [2,0], X20),
+  jpl_call(Mat4d, 'getElement', [2,1], X21),
+  jpl_call(Mat4d, 'getElement', [2,2], X22),
+  jpl_call(Mat4d, 'getElement', [2,3], X23),
+  jpl_call(Mat4d, 'getElement', [3,0], X30),
+  jpl_call(Mat4d, 'getElement', [3,1], X31),
+  jpl_call(Mat4d, 'getElement', [3,2], X32),
+  jpl_call(Mat4d, 'getElement', [3,3], X33).
+
+% TODO: Merge with above
+mng_designator_location(Designator, [X00, X01, X02, X03,
+                                     X10, X11, X12, X13,
+                                     X20, X21, X22, X23,
+                                     X30, X31, X32, X33], T) :-
+  rdf_split_url(_, DesigID, Designator),
+  
+  mongo_interface(DB),
+  time_term(T, Time),
+  jpl_call(DB, 'getDesignatorLocation', [DesigID, Time], Mat4d),
+  jpl_is_object(Mat4d),
+  
+  jpl_call(Mat4d, 'getElement', [0,0], X00),
+  jpl_call(Mat4d, 'getElement', [0,1], X01),
+  jpl_call(Mat4d, 'getElement', [0,2], X02),
+  jpl_call(Mat4d, 'getElement', [0,3], X03),
+  jpl_call(Mat4d, 'getElement', [1,0], X10),
+  jpl_call(Mat4d, 'getElement', [1,1], X11),
+  jpl_call(Mat4d, 'getElement', [1,2], X12),
+  jpl_call(Mat4d, 'getElement', [1,3], X13),
+  jpl_call(Mat4d, 'getElement', [2,0], X20),
+  jpl_call(Mat4d, 'getElement', [2,1], X21),
+  jpl_call(Mat4d, 'getElement', [2,2], X22),
+  jpl_call(Mat4d, 'getElement', [2,3], X23),
+  jpl_call(Mat4d, 'getElement', [3,0], X30),
+  jpl_call(Mat4d, 'getElement', [3,1], X31),
+  jpl_call(Mat4d, 'getElement', [3,2], X32),
+  jpl_call(Mat4d, 'getElement', [3,3], X33).
 
 
+%% mng_desig_get_value(?Designator, +DesigJava, +Prop, -Value).
+% 
 % Internal helper method: handle the different kinds of designator values
+%
+% @param Designator  Designator instance
+% @param DesigJava   Java handle of a org.knowrob.mongo.types.Designator object
+% @param Prop        Designator property
+% @param Value       Value extracted from the designator, e.g. a primitive value
+%                    (string, float etc), the handle of a nested designator object,
+%                    or an instance of a RotationMatrix3D of an object pose
+%
 
 % create designator instance for child-designators
-mng_desig_get_value(_Designator, DesigJava, Prop, Value) :-
-  jpl_call(DesigJava, 'get', [Prop], ValIn),
-  jpl_ref_to_type(ValIn,  class([org,knowrob,interfaces,mongo,types],['Designator'])),
-  Value=ValIn. % TODO
+%mng_desig_get_value(_Designator, DesigJava, ValIn, Value) :-
+%  jpl_ref_to_type(ValIn,  class([org,knowrob,interfaces,mongo,types],['Designator'])),
+%  Value=ValIn. % TODO
 
+% NOTE(daniel): Commented because
+%    - PoseStamp is not used anymore in Designator class, so this will never be the case
+%    - A getter function should not assert anything
+% create observation of the object to which the designator is attached.
+%mng_desig_get_value(Designator, DesigJava, PoseStamped, Pose) :-
+%
+%  jpl_ref_to_type(PoseStamped,  class([org,knowrob,interfaces,mongo,types],['PoseStamped'])),
+%
+%  % find out which object we are talking about
+%  rdf_has(Obj, knowrob:designator, Designator),
+%
+%  % get pose time
+%  jpl_get(PoseStamped, 'header', Header),
+%  jpl_get(Header, 'stamp', Stamp),
+%  jpl_get(Stamp,  'secs', TimeSecs),
+%  term_to_atom(TimeSecs, TimeSecsAtom),
+%  atom_concat('http://knowrob.org/kb/knowrob_mongo.owl#timepoint_', TimeSecsAtom, PoseTimePoint),
+%
+%  % transform into /map
+%  jpl_call(PoseStamped, 'getMatrix4d', [], PoseMatrix4d),
+%  jpl_get(Header, 'frame_id', SourceFrame),
+%  knowrob_coordinates:matrix4d_to_list(PoseMatrix4d, PoseListIn),
+%  mng_transform_pose(PoseListIn, SourceFrame, '/map', PoseTimePoint, PoseListOut),
+%  create_pose(PoseListOut, Pose),
+%
+%  % determine detection type (e.g. perception)
+%  jpl_call(DesigJava, 'getDetectionType', [], DetectionType),
+%
+%  % create perception instance attached to the object this designator belongs to
+%  atom_concat('http://knowrob.org/kb/knowrob.owl#', DetectionType, DClass),
+%  rdf_instance_from_class(DClass, Detection),
+%  set_object_perception(Obj, Detection),
+%  rdf_assert(Detection, knowrob:eventOccursAt, Pose),
+%
+%  rdf_assert(PoseTimePoint, rdf:type, 'http://knowrob.org/kb/knowrob.owl#TimePoint'),
+%  rdf_assert(Detection, knowrob:startTime, PoseTimePoint).
 
-% create observation of the object to which the designator is attached
-mng_desig_get_value(Designator, DesigJava, Prop, Pose) :-
-
-  jpl_call(DesigJava, 'get', [Prop], PoseStamped),
-  jpl_ref_to_type(PoseStamped,  class([org,knowrob,interfaces,mongo,types],['PoseStamped'])),
-
-  % find out which object we are talking about
-  rdf_has(Obj, knowrob:designator, Designator),
-
-  % get pose time
-  jpl_get(PoseStamped, 'header', Header),
-  jpl_get(Header, 'stamp', Stamp),
-  jpl_get(Stamp,  'secs', TimeSecs),
-  term_to_atom(TimeSecs, TimeSecsAtom),
-  atom_concat('http://knowrob.org/kb/knowrob_mongo.owl#timepoint_', TimeSecsAtom, PoseTimePoint),
-
-  % transform into /map
-  jpl_call(PoseStamped, 'getMatrix4d', [], PoseMatrix4d),
-  jpl_get(Header, 'frame_id', SourceFrame),
-  knowrob_coordinates:matrix4d_to_list(PoseMatrix4d, PoseListIn),
-  mng_transform_pose(PoseListIn, SourceFrame, '/map', PoseTimePoint, PoseListOut),
-  create_pose(PoseListOut, Pose),
-
-  % determine detection type (e.g. perception)
-  jpl_call(DesigJava, 'getDetectionType', [], DetectionType),
-
-  % create perception instance attached to the object this designator belongs to
-  atom_concat('http://knowrob.org/kb/knowrob.owl#', DetectionType, DClass),
-  rdf_instance_from_class(DClass, Detection),
-  set_object_perception(Obj, Detection),
-  rdf_assert(Detection, knowrob:eventOccursAt, Pose),
-
-  rdf_assert(PoseTimePoint, rdf:type, 'http://knowrob.org/kb/knowrob.owl#TimePoint'),
-  rdf_assert(Detection, knowrob:startTime, PoseTimePoint).
+mng_desig_get_value(_Designator, _DesigJava, Vec, Vector) :-
+  jpl_ref_to_type(Vec,  class([javax,vecmath],['Vector3d'])),
+  jpl_get(Vec, x, X), jpl_get(Vec, y, Y), jpl_get(Vec, z, Z),
+  Vector = [X, Y, Z].
 
 % just return the value for other properties
-mng_desig_get_value(_Designator, DesigJava, Prop, Value) :-
-  jpl_call(DesigJava, 'get', [Prop], Value).
-
-
+mng_desig_get_value(_Designator, _DesigJava, ValIn, Value) :-
+  Value = ValIn.
 
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 % Tf integration
 %
 
-
 %% mng_lookup_transform(+Target, +Source, +TimePoint, -Transform) is nondet.
 %
+% Determine the transform from Source to Target at TimePoint based on the logged
+% tf data.
+% 
 % @param Target     Target frame ID
 % @param Source     Source frame ID
 % @param TimePoint  Instance of knowrob:TimePoint
@@ -218,11 +490,39 @@ mng_lookup_transform(Target, Source, TimePoint, Transform) :-
 
   mongo_interface(DB),
   jpl_call(DB, 'lookupTransform', [Target, Source, Time], StampedTransform),
+  % Make sure transform is not null!
+  not( jpl_null(StampedTransform) ),
 
   jpl_call(StampedTransform, 'getMatrix4', [], TransformMatrix4d),
   knowrob_coordinates:matrix4d_to_list(TransformMatrix4d, Transform).
 
+%% mng_lookup_position(+Target, +Source, +TimePoint, -Position) is nondet.
+%
+% Determine the position from Source to Target at TimePoint based on the logged
+% tf data.
+% 
+% @param Target     Target frame ID
+% @param Source     Source frame ID
+% @param TimePoint  Instance of knowrob:TimePoint
+% @param Position   Position as list[3]
+%
+mng_lookup_position(Target, Source, TimePoint, Position) :-
+  mng_lookup_transform(Target, Source, TimePoint, Transform),
+  nth0( 3, Transform, X),
+  nth0( 7, Transform, Y),
+  nth0(11, Transform, Z),
+  Position = [ X, Y, Z ].
 
+%% mng_transform_pose(+PoseListIn, +SourceFrame, +TargetFrame, +TimePoint, -PoseListOut) is nondet.
+% 
+% Transform PoseListIn from SourceFrame into TargetFrame based on the logged tf data.
+% 
+% @param PoseListIn    Pose matrix in SourceFrame to be transformed into TargetFrame, as row-based list[16]
+% @param SourceFrame   Source frame ID
+% @param TargetFrame   Target frame ID
+% @param TimePoint     Instance of knowrob:TimePoint
+% @param PoseListOut   Pose matrix as row-based list[16]
+%
 mng_transform_pose(PoseListIn, SourceFrame, TargetFrame, TimePoint, PoseListOut) :-
 
   rdf_split_url(_, TimePointLocal, TimePoint),
@@ -234,6 +534,7 @@ mng_transform_pose(PoseListIn, SourceFrame, TargetFrame, TimePoint, PoseListOut)
   jpl_new('tfjava.Stamped', [MatrixIn, SourceFrame, TimeInt], StampedIn),
 
   knowrob_coordinates:list_to_matrix4d([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1], MatrixOut),
+  % TODO: What is /base_link doing here?
   jpl_new('tfjava.Stamped', [MatrixOut, '/base_link', TimeInt], StampedOut),
 
   mongo_interface(DB),
@@ -254,6 +555,8 @@ mng_timestamp(Date, Stamp) :-
   mongo_interface(DB),
   jpl_call(DB, 'getMongoTimestamp', [Date], Stamp).
 
+
+
 %% mng_robot_pose(+Robot, -Pose) is nondet.
 %
 % Compute the pose of all components of the robot at the current point in time.
@@ -262,8 +565,11 @@ mng_timestamp(Date, Stamp) :-
 % @param Pose         Instance of a knowrob:RotationMatrix3D with the pose data
 %
 mng_robot_pose(Robot, Pose) :-
+  mng_robot_pose(Robot, Pose, 'map').
+  
+mng_robot_pose(Robot, Pose, Target) :-
   get_timepoint(TimePoint),
-  mng_robot_pose_at_time(Robot, '/map', TimePoint, Pose).
+  mng_robot_pose_at_time(Robot, Target, TimePoint, Pose).
 
 
 %% mng_robot_pose_at_time(Robot, TargetFrame, TimePoint, Pose) is nondet.
@@ -295,11 +601,13 @@ mng_robot_pose_at_time(Robot, TargetFrame, TimePoint, Pose) :-
 % @param Pose       Instance of a knowrob:RotationMatrix3D with the pose data
 %
 mng_comp_pose(RobotPart, Pose) :-
+  mng_comp_pose(RobotPart,  Pose , '/map' ).
 
+mng_comp_pose(RobotPart, Pose, Target) :-
   get_timepoint(TimePoint),
-  mng_comp_pose_at_time(RobotPart, '/map', TimePoint, Pose).
+  mng_comp_pose_at_time(RobotPart, Target, TimePoint, Pose).
 
-
+  
 %% mng_comp_pose_at_time(+RobotPart, +TargetFrame, +TimePoint, -Pose) is nondet.
 %
 % Read the pose of RobotPart in the given coordinate frame from logged tf data
@@ -312,11 +620,27 @@ mng_comp_pose(RobotPart, Pose) :-
 mng_comp_pose_at_time(RobotPart, TargetFrame, TimePoint, Pose) :-
 
   owl_has(RobotPart, 'http://knowrob.org/kb/srdl2-comp.owl#urdfName', literal(SourceFrameID)),
-  atom_concat('/', SourceFrameID, SourceFrame),
-
+  ( atom_prefix(SourceFrameID,'/') ->
+    SourceResolved = SourceFrameID      
+    ; atom_concat('/',SourceFrameID, SourceResolved) 
+  ),    
+  ( robot_part_tf_prefix(RobotPart, TfPrefix) ->
+    ( atom_prefix(TfPrefix,'/') ->
+      ( TfPrefix == '/' ->
+	TfResolved = ''
+	;TfResolved = TfPrefix      
+      )
+      ; atom_concat('/',TfPrefix, TfResolved) 
+    ),
+    atom_concat(TfResolved, SourceResolved,SourceFrame)
+    ;SourceFrame = SourceResolved
+  ),
+  
+  %%FIXME @Bender this should be replaced with the tfPrefix SPEED THIS UP
   mng_obj_pose_at_time(RobotPart, SourceFrame, TargetFrame, TimePoint, Pose).
 
-
+  
+  
 
 %% mng_obj_pose_at_time(+Obj, +SourceFrame, +TargetFrame, +TimePoint, -Pose) is nondet.
 %
@@ -364,8 +688,14 @@ mng_obj_pose_at_time(Obj, SourceFrame, TargetFrame, TimePoint, Pose) :-
 
 %% obj_visible_in_camera(+Obj, ?Camera, +TimePoint) is nondet.
 %
-% Check if Obj is visible by Camera at time TimePoint.
+% Check if Obj is visible by Camera at time TimePoint by reading the camera
+% properties from the robot's SRDL description and computing whether the
+% object center is inside the view frustrum.
 %
+% @param Obj        Instance of an object in the scene
+% @param Camera     Instance of an srdl2comp:Camera
+% @param TimePoint  Instance of a knowrob:TimePoint at which the scene is to be evaluated
+% 
 obj_visible_in_camera(Obj, Camera, TimePoint) :-
 
   findall(Camera, owl_individual_of(Camera, srdl2comp:'Camera'), Cameras),
@@ -403,7 +733,18 @@ obj_visible_in_camera(Obj, Camera, TimePoint) :-
 
 
 
-
+%% obj_blocked_by_in_camera(?Obj, ?Blocker, ?Camera, +TimePoint) is nondet.
+% 
+% Check if the view on Obj from Camera at time TimePoint is blocked by object
+% Blocker by reading the camera properties from the robot's SRDL description
+% and by computing whether the difference in bearing between the two objects'
+% center points from the camera viewpoint is less than ten degrees.
+%
+% @param Obj        Instance of an object in the scene
+% @param Blocker    Instance of an object in the scene
+% @param Camera     Instance of an srdl2comp:Camera
+% @param TimePoint  Instance of a knowrob:TimePoint at which the scene is to be evaluated
+% 
 obj_blocked_by_in_camera(Obj, Blocker, Camera, TimePoint) :-
 
   findall(Camera, owl_individual_of(Camera, srdl2comp:'Camera'), Cameras),
@@ -424,7 +765,8 @@ obj_blocked_by_in_camera(Obj, Blocker, Camera, TimePoint) :-
   % debug
 %   ObjXDeg is ObjBearingX /2 /pi * 360,
 %   ObjYDeg is ObjBearingY /2 /pi * 360,
-
+%%% PR2 ???? what is this doing here???
+%%% 
   % Read poses of blocking robot parts w.r.t. camera
   sub_component('http://knowrob.org/kb/PR2.owl#PR2Robot1', Blocker),
   rdfs_individual_of(Blocker, 'http://knowrob.org/kb/srdl2-comp.owl#UrdfLink'),
@@ -465,7 +807,6 @@ obj_blocked_by_in_camera(Obj, Blocker, Camera, TimePoint) :-
 % @param QueryPattern  Query pattern as nested lists
 % 
 mng_desig_matches(Designator, QueryPattern) :-
-
   % convert query pattern into list of query strings suitable for MongoDB queries
   desig_list_to_query(QueryPattern, 'designator', QueryStrings),
   pairs_keys_values(QueryStrings, QueryKeys, QueryValues),
@@ -476,11 +817,14 @@ mng_desig_matches(Designator, QueryPattern) :-
   % send MongoDB query:
   mongo_interface(DB),
   jpl_call(DB, 'getDesignatorsByPattern', [QueryKeysArr, QueryValuesArr], DesigJavaArr),
+  not(DesigJavaArr = @(null)),
 
   jpl_array_to_list(DesigJavaArr, DesigJavaList),
   
   member(DesigJava, DesigJavaList),
-  jpl_call(DesigJava, 'get', ['_id'], DesigID),
+  not(DesigJava = @(null)),
+  jpl_call(DesigJava, 'get', ['_ID'], DesigID),
+  not(DesigID = @(null)),
   rdf_split_url('http://knowrob.org/kb/cram_log.owl#', DesigID, Designator).
 
 

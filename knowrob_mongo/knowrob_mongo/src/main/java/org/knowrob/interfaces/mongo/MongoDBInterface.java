@@ -1,6 +1,36 @@
+/*
+ * Copyright (c) 2013 Moritz Tenorth, 2015 Daniel Beßler
+ *
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the Technische Universiteit Eindhoven nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
+
 package org.knowrob.interfaces.mongo;
 
-import java.net.UnknownHostException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
 import java.text.ParseException;
@@ -8,7 +38,6 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 import java.util.TimeZone;
 import java.util.regex.Pattern;
 
@@ -22,19 +51,16 @@ import org.ros.message.Time;
 import tfjava.Stamped;
 import tfjava.StampedTransform;
 
+import com.mongodb.BasicDBList;
 import com.mongodb.BasicDBObject;
 import com.mongodb.DB;
 import com.mongodb.DBCollection;
 import com.mongodb.DBCursor;
 import com.mongodb.DBObject;
-import com.mongodb.MongoClient;
 import com.mongodb.QueryBuilder;
 
 
 public class MongoDBInterface {
-
-	MongoClient mongoClient;
-	DB db;
 
 	TFMemory mem;
 
@@ -47,34 +73,28 @@ public class MongoDBInterface {
 	 *
 	 */
 	public MongoDBInterface() {
-
-		String host = "localhost";
-		int port = 27017;
-		
 		// Format of dates as saved in mongo
 		mongoDateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
 		mongoDateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
-		
-		// check if MONGO_PORT_27017_TCP_ADDR and MONGO_PORT_27017_TCP_PORT 
-		// environment variables are set
-		
-        Map<String, String> env = System.getenv();
-        if(env.containsKey("MONGO_PORT_27017_TCP_ADDR")) {
-        	host = env.get("MONGO_PORT_27017_TCP_ADDR");
-        }
         
-        if(env.containsKey("MONGO_PORT_27017_TCP_PORT")) {
-        	port = Integer.valueOf(env.get("MONGO_PORT_27017_TCP_PORT"));
-        }
-        
-		try {
-			mongoClient = new MongoClient(host, port);
-			db = mongoClient.getDB("roslog");
-
-		} catch (UnknownHostException e) {
-			e.printStackTrace();
-		}
 		mem = TFMemory.getInstance();
+	}
+	
+	/**
+	 * @return DB handle of currently active DB
+	 */
+	public DB getDatabase() {
+		return mem.getDatabase();
+	}
+	
+	/**
+	 * Set the DB name that is used for mongo queries.
+	 * @param name The DB name
+	 * @return DB handle
+	 */
+	public DB setDatabase(String name) {
+		mem.setDatabase(name);
+		return getDatabase();
 	}
 
 
@@ -104,8 +124,26 @@ public class MongoDBInterface {
 	public boolean transformPose(String targetFrameID, Stamped<Matrix4d> stampedIn, Stamped<Matrix4d> stampedOut) {
 		return mem.transformPose(targetFrameID, stampedIn, stampedOut);
 	}
-
-
+	
+	public Designator getDecisionTree() {
+		DBCollection coll = getDatabase().getCollection("resulting_decision_tree");
+		DBObject query = new QueryBuilder().get();
+		DBObject cols  = new BasicDBObject();
+		cols.put("tree", 1 );
+		
+		DBCursor cursor = coll.find(query, cols);
+		while(cursor.hasNext()) {
+			DBObject row = cursor.next();
+			Designator desig = new Designator().readFromDBList((BasicDBList) row.get("tree"));
+			if(cursor.hasNext()) cursor.close();
+			return desig;
+		}
+		
+		cursor.close();
+		
+		return null;
+	}
+	
 	/**
 	 * Read designator value from either the uima_uima_results collection
 	 * or the logged_designators collection.
@@ -113,27 +151,44 @@ public class MongoDBInterface {
 	 * @param designator Designator ID to be read
 	 * @return Instance of a Designator
 	 */
-	public Designator getDesignatorByID(String designator) {
-		
-		DBCollection coll = db.getCollection("logged_designators");
-		DBObject query = QueryBuilder
-				.start("designator._id").is(designator).get();
-
-		DBObject cols  = new BasicDBObject();
-		cols.put("__recorded", 1 );		
-		cols.put("designator", 1 );
-
-		DBCursor cursor = coll.find(query, cols);
-
-		while(cursor.hasNext()) {
-			DBObject row = cursor.next();
-			Designator desig = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
-			return desig;
-		}
-		cursor.close();
-		
-		return null;
+	public Designator getDesignatorByID(Object designator) {
+	
+		return getDesignatorByID(designator, "designator._id");
 	}
+	
+	/**
+	 * Read designator value from either the uima_uima_results collection
+	 * or the logged_designators collection.
+	 *
+	 * @param designator Designator ID to be read
+	 * @param idKey The ID key in mongo DB
+	 * @return Instance of a Designator
+	 */
+	 public Designator getDesignatorByID(Object designator, String idKey) {
+		 try {
+			 DBCollection coll = getDatabase().getCollection("logged_designators");
+			 DBObject query = QueryBuilder.start(idKey).is(designator).get();
+			 
+			 DBObject cols  = new BasicDBObject();
+			 cols.put("__recorded", 1 );
+			 cols.put("designator", 1 );
+			 
+			 DBCursor cursor = coll.find(query, cols);
+			 while(cursor.hasNext()) {
+				 DBObject row = cursor.next();
+				 Designator desig = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
+				 if(cursor.hasNext()) cursor.close();
+				 return desig;
+			 }
+			 cursor.close();
+		 }
+		 catch(Exception e) {
+			 System.err.println(e.getMessage());
+			 e.printStackTrace();
+		 }
+		 
+		 return null;
+    }
 	
 	/**
 	 * Read designators based on the given filter pattern. The strings in the
@@ -148,7 +203,7 @@ public class MongoDBInterface {
 	 */
 	public Designator[] getDesignatorsByPattern(String[] keys, String[] values) {
 		
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		
 		QueryBuilder qb = QueryBuilder.start("designator").exists("_id");
 		for(int i=0; i<keys.length; i++) {
@@ -186,7 +241,7 @@ public class MongoDBInterface {
 	public Designator latestUIMAPerceptionBefore(int posix_ts) {
 
 		Designator desig = null;
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 
 		// read all events up to one minute before the time
 		Date start = new ISODate((long) 1000 * (posix_ts - 60) ).getDate();
@@ -216,6 +271,116 @@ public class MongoDBInterface {
 		return desig;
 	}
 
+	/**
+	 * Find latest designator before given timepoint.
+	 * @param posix_ts Time stamp in POSIX format (seconds since 1.1.1970)
+	 * @return The matching designator or null
+	 */
+	public Designator getLatestDesignatorBefore(long posix_ts) {
+		return getLatestDesignatorBefore((double)posix_ts, null, null, null);
+	}
+
+	/**
+	 * Find latest designator before given timepoint.
+	 * @param posix_ts Time stamp in POSIX format (seconds since 1.1.1970)
+	 * @return The matching designator or null
+	 */
+	public Designator getLatestDesignatorBefore(double posix_ts) {
+		return getLatestDesignatorBefore(posix_ts, null, null, null);
+	}
+
+	/**
+	 * Find latest designator that matches given key-value pairs.
+	 * @param posix_ts Time stamp in POSIX format (seconds since 1.1.1970)
+	 * @param keys DB keys
+	 * @param relations Pointwise relations between key and value
+	 * @param values DB values
+	 * @return The matching designator or null
+	 */
+	public Designator getLatestDesignatorBefore(long posix_ts, String[] keys, String[] relations, Object[] values) {
+		return getLatestDesignatorBefore((double)posix_ts, keys, relations, values);
+	}
+	
+	/**
+	 * Find latest designator that matches given key-value pairs.
+	 * @param posix_ts Time stamp in POSIX format (seconds since 1.1.1970)
+	 * @param keys DB keys
+	 * @param relations Pointwise relations between key and value
+	 * @param values DB values
+	 * @return The matching designator or null
+	 */
+	// TODO: merge with latestUIMAPerceptionBefore & getDesignatorsByPattern
+	public Designator getLatestDesignatorBefore(double posix_ts, String[] keys, String[] relations, Object[] values) {
+		try {
+			Designator desig = null;
+			DBCollection coll = getDatabase().getCollection("logged_designators");
+
+			// read all events up to one minute before the time
+			Date t = new ISODate((long) (1000.0 * posix_ts) ).getDate();
+			QueryBuilder query = QueryBuilder.start("__recorded").lessThan( t );
+			
+			if(relations!=null&&keys!=null&&values!=null) {
+				for(int i=0; i<relations.length && i<keys.length && i<values.length; ++i) {
+					String rel = relations[i];
+					String key = keys[i];
+					Object val = values[i];
+					
+					if("==".equals(rel) || "=".equals(rel) || "is".equals(rel))
+						query = query.and(key).is(val);
+					else if("!=".equals(rel))
+						query = query.and(key).notEquals(val);
+					else if("<".equals(rel))
+						query = query.and(key).lessThan(val);
+					else if("<=".equals(rel))
+						query = query.and(key).lessThanEquals(val);
+					else if(">".equals(rel))
+						query = query.and(key).greaterThan(val);
+					else if(">=".equals(rel))
+						query = query.and(key).greaterThanEquals(val);
+					else if("exist".equals(rel) || "exists".equals(rel))
+						query = query.and(key).exists(val);
+					else {
+						System.err.println("Unknown mongo relation: " + rel);
+					}
+				}
+			}
+			
+			DBObject queryInstance = null;
+			try {
+				queryInstance = query.get();
+			}
+			catch(Exception e){
+				e.printStackTrace();
+				return null;
+			}
+			
+			DBObject cols  = new BasicDBObject();
+			cols.put("designator", 1 );
+
+			DBCursor cursor = coll.find(queryInstance, cols);
+			cursor.sort(new BasicDBObject("__recorded", -1));
+			try {
+				if(cursor.hasNext()) {
+					desig = new Designator().readFromDBObject(
+						(BasicDBObject) cursor.next().get("designator"));
+				}
+			}
+			catch(Exception e){
+				e.printStackTrace();
+			}
+			finally {
+				cursor.close();
+			}
+			return desig;
+		}
+		catch (Exception e) {
+			System.err.println("getLatestDesignatorBefore failed: " + e.getMessage());
+			e.printStackTrace();
+			// TODO: handle exception
+		}
+		return null;
+	}
+
 
 	/**
 	 * Get all times when an object has been detected
@@ -226,7 +391,7 @@ public class MongoDBInterface {
 	public List<Date> getUIMAPerceptionTimes(String object) {
 
 		List<Date> times = new ArrayList<Date>();
-		DBCollection coll = db.getCollection("logged_designators");
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 
 		// TODO: This will always return a single result since the ID is unique
 		DBObject query = QueryBuilder
@@ -253,12 +418,39 @@ public class MongoDBInterface {
 		}
 		return times;
 	}
-
-
+	
+	/**
+	 * Find distinct designator values for given DB key.
+	 * @param key The DB key
+	 * @return Array of different values
+	 */
+	public Object[] getDistinctDesignatorValues(String key) {
+		DBCollection coll = getDatabase().getCollection("logged_designators");
+		
+		List<?> l = coll.distinct(key);
+		Object[] out = new Object[l.size()];
+		int index = 0;
+		for(Object v : l) {
+			out[index] = v;
+			index += 1;
+		}
+		
+		return out;
+	}
+	
+	/**
+	 * Compute world transformation matrix that represents the pose
+	 * of a designator.
+	 * @param id The designator id
+	 * @return The transformation matrix
+	 */
 	@SuppressWarnings("unchecked")
 	public Matrix4d getDesignatorLocation(String id) {
-		Matrix4d poseMatrix = null;
-		DBCollection coll = db.getCollection("logged_designators");
+		// FIXME: bad assumption
+		final String targetFrame = "/map";
+		
+		Stamped<Matrix4d> poseMatrix = null;
+		DBCollection coll = getDatabase().getCollection("logged_designators");
 		DBObject query = QueryBuilder
 				.start("designator._id").is(id).get();
 
@@ -267,15 +459,40 @@ public class MongoDBInterface {
 		cols.put("designator", 1 );
 
 		DBCursor cursor = coll.find(query, cols);
-		cursor.sort(new BasicDBObject("__recorded", -1));
 		try {
+			cursor.sort(new BasicDBObject("__recorded", -1));
+			
 			while(cursor.hasNext()) {
 
 				DBObject row = cursor.next();
-				Designator res = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
-				Designator res2 = (Designator)res.get("AT");
-				poseMatrix = ((Stamped<Matrix4d>)res2.get("POSE")).getData();
-				break;
+				Object mat = null;
+				
+				Designator d = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
+				Designator loc = (Designator)d.get("AT");
+				if(loc != null) {
+					mat = loc.get("POSE");
+				}
+				if(mat == null) {
+					mat = d.get("POSE");
+				}
+				
+				if(mat!=null && mat instanceof Stamped<?>) {
+					poseMatrix = (Stamped<Matrix4d>)mat;
+					if(!poseMatrix.frameID.startsWith("/"))
+						poseMatrix.frameID = "/"+poseMatrix.frameID;
+					
+					// Transform pose to target frame if required
+					if(poseMatrix.frameID!=null && !targetFrame.equals(poseMatrix.frameID)) {
+						final Stamped<Matrix4d> worldFrame = new Stamped<Matrix4d>();
+						worldFrame.setData(new Matrix4d());
+						worldFrame.getData().setIdentity();
+						
+						if(transformPose(targetFrame, poseMatrix, worldFrame))
+							poseMatrix = worldFrame;
+					}
+					
+					break;
+				}
 
 			}
 		} catch(Exception e){
@@ -283,7 +500,76 @@ public class MongoDBInterface {
 		} finally {
 			cursor.close();
 		}
-		return poseMatrix;
+		if(poseMatrix == null)
+			return null;
+		else
+			return poseMatrix.getData();
+	}
+
+	// TODO: merge with above
+	@SuppressWarnings("unchecked")
+	public Matrix4d getDesignatorLocation(String id, double posix_ts) {
+		// FIXME: bad assumption
+		final String targetFrame = "/map";
+
+		// read all events up to one minute before the time
+		Object t = new ISODate((long) (1000.0 * posix_ts) ).getDate();
+		Stamped<Matrix4d> poseMatrix = null;
+
+		DBCollection coll = getDatabase().getCollection("logged_designators");
+		DBObject query = QueryBuilder
+				.start("designator._id").is(id).and("__recorded").lessThan( t ).get();
+		
+
+		DBObject cols  = new BasicDBObject();
+		cols.put("__recorded", 1 );
+		cols.put("designator", 1 );
+
+		DBCursor cursor = coll.find(query, cols);
+		try {
+			cursor.sort(new BasicDBObject("__recorded", -1));
+			
+			while(cursor.hasNext()) {
+				DBObject row = cursor.next();
+				Object mat = null;
+				
+				Designator d = new Designator().readFromDBObject((BasicDBObject) row.get("designator"));
+				Designator loc = (Designator)d.get("AT");
+				if(loc != null) {
+					mat = loc.get("POSE");
+				}
+				if(mat == null) {
+					mat = d.get("POSE");
+				}
+				
+				if(mat!=null && mat instanceof Stamped<?>) {
+					poseMatrix = (Stamped<Matrix4d>)mat;
+					if(!poseMatrix.frameID.startsWith("/"))
+						poseMatrix.frameID = "/"+poseMatrix.frameID;
+					
+					// Transform pose to target frame if required
+					if(poseMatrix.frameID!=null && !targetFrame.equals(poseMatrix.frameID)) {
+						final Stamped<Matrix4d> worldFrame = new Stamped<Matrix4d>();
+						worldFrame.setData(new Matrix4d());
+						worldFrame.getData().setIdentity();
+						
+						if(transformPose(targetFrame, poseMatrix, worldFrame))
+							poseMatrix = worldFrame;
+					}
+					
+					break;
+				}
+
+			}
+		} catch(Exception e){
+			e.printStackTrace();
+		} finally {
+			cursor.close();
+		}
+		if(poseMatrix == null)
+			return null;
+		else
+			return poseMatrix.getData();
 	}
 
 	/**
@@ -350,7 +636,7 @@ public class MongoDBInterface {
 		}
 		
 		Timestamp timestamp = Timestamp.valueOf("2014-08-27 13:30:35.0");
-		Time t = new Time(timestamp.getTime());  //1
+		//Time t = new Time(timestamp.getTime());  //1
 		System.out.println(timestamp.getTime());
 
 
