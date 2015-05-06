@@ -48,8 +48,6 @@
     create_object_perception(r,+,t,-),
     check_ns(r,-).
 
-:- print("Hello there...").
-
 %% check_ns(+Entity, -NSEntity)
 %
 % Utility predicate for verifying the KnowRob OWL namespace. If the
